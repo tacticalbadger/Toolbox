@@ -431,8 +431,10 @@ then ran as a second instance against a fresh fixture and the local
 servers: an RDP session showing the H.264 picture, an SSH pane, and the
 provider-account, provider-rename and folder-rename aids, with the same
 results as the debug build. The owner runs 0.3.0 from `/Applications`
-until they install 0.3.1 from the Releases page; `build/` on the desktop
-Mac holds the release build and can go.
+until they install 0.3.1 from the Releases page. `build/` on the desktop
+Mac was removed afterwards, as after every release from now on (see the
+release flow at the end); the next session there starts with
+`make core && make app`.
 
 **0.3.1: providers and their folders.** The owner reported Active
 Directory computers listed twice (screenshot, 2026-11-23, "trace and
@@ -549,7 +551,12 @@ the bundle identifier `com.dobbs.Toolbox`; whether to delete the 0.2.0
 release, whose binary contains build paths. A Developer ID signature
 names its holder by design.
 
-Release flow, unchanged: bump `VERSION`, add
-`docs/release-notes/<version>.md`, commit and push, `make release`,
-`make publish`, then a commit that records the release here. The owner installs from the Releases page; nothing needs
-to stay in `build/`.
+Release flow: bump `VERSION`, add `docs/release-notes/<version>.md`,
+commit and push, `make release`, `make publish`, then a commit that
+records the release here. **Then remove `build/`, every time, without
+asking** (the owner's standing instruction since 2026-11-23: "always
+remove builds after they're pushed to releases"; they install from the
+Releases page). Do the checks that need the local files first: the
+quarantined copy of the DMG, the download compared with the local file, a
+run of the release build. The compile caches (`core/target`, `App/.build`)
+stay.
