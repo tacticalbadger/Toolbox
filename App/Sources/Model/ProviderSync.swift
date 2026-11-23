@@ -43,19 +43,26 @@ final class ProviderSync: ObservableObject {
             let result = try await AppModel.shared.store.syncProvider(id: provider.id, bind: bind)
             AppModel.shared.reload()
             if interactive, !result.warnings.isEmpty {
-                Prompts.info(title: "\(provider.name) synced with warnings",
+                Prompts.info(title: "\(currentName(of: provider)) synced with warnings",
                              message: result.warnings.joined(separator: "\n\n"))
             }
             return result
         } catch {
             AppModel.shared.reload()
+            // Deleted while it ran: there is nothing left to report on.
+            guard AppModel.shared.provider(provider.id) != nil else { return nil }
             if interactive {
-                Prompts.error(title: "Couldn't sync \(provider.name)", message: describe(error))
+                Prompts.error(title: "Couldn't sync \(currentName(of: provider))", message: describe(error))
             } else {
-                NSLog("provider \(provider.name) auto-sync failed: \(describe(error))")
+                NSLog("provider \(currentName(of: provider)) auto-sync failed: \(describe(error))")
             }
             return nil
         }
+    }
+
+    /// The provider's name now; it can be renamed while a sync runs.
+    private func currentName(of provider: Provider) -> String {
+        AppModel.shared.provider(provider.id)?.name ?? provider.name
     }
 
     /// (Re)arms periodic refresh for providers that want it.

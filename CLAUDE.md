@@ -84,7 +84,7 @@ The full dependency table is in README.md ("Dependencies"). In short:
    xcodegen` (`make xcode`, needs `sudo xcodebuild -license accept`),
    `cargo install cargo-audit`, `brew install gh`.
 4. `make core` then `make app` → `build/Toolbox.app`. `make test` → Rust
-   tests (67 as of 2026-11-20). `make run` launches the bundle.
+   tests (72 as of 2026-11-23). `make run` launches the bundle.
 5. `make signing` once (asks for the login password): creates and trusts a
    self-signed "Toolbox Local Signing" certificate so the app's signature
    stays stable across builds and the Keychain's "Always Allow" for the
@@ -135,7 +135,26 @@ server without the pipeline (so RemoteFX) that copies text on its side.
 
 `launch.sh` quits any running Toolbox first. If the owner has the app open
 with real sessions, do not use it: start a second instance with `open -n`
-and the same `--env`/`--args`, and stop it by its own PID.
+and the same `--env`/`--args`, and stop it by its own PID
+(`pgrep -f "$PWD/build/Toolbox.app/Contents/MacOS/Toolbox"`; the owner's
+runs from `/Applications`). For a before-and-after against the installed
+release, copy `/Applications/Toolbox.app` to a scratch folder and start
+the copy the same way, so its process is told apart by path too. Never
+point any build at the owner's real store for a check: providers with
+auto-refresh sync at launch (real `op`, real LDAP) and that writes the
+store. Open a copy from a throwaway Rust example instead and print counts.
+`open … --stderr <file>` is how to read such an instance's `NSLog` lines
+(`log show` does not return them).
+
+Every instance, whatever store it opens, shares the app's preferences
+(`com.dobbs.Toolbox`). The sidebar's record of open folders is the one
+thing in there that depends on the store, so an instance started with
+`TOOLBOX_STORE_PATH` keeps it under another name (`NSOutlineView Items
+sidebar.tree.other-store`; the real one ends in `sidebar.tree`). To check
+what a relaunch reopens, write that list by hand, for example
+`defaults write com.dobbs.Toolbox "NSOutlineView Items sidebar.tree.other-store" -array group:library folder:ACME prov:ad-fake`,
+and delete the key when done. Never print the real list: it holds the
+owner's folder names.
 
 `capture.sh` cannot work without Screen Recording permission or with the
 screen locked (`ioreg -n Root -d1 | grep IOConsoleLocked`). Use the app's
@@ -163,6 +182,9 @@ an RDP desktop), `--edit-connection <id|new>`,
 `--edit-provider <id|new>`, `--set-folder-credential <path>`,
 `--demo-provider-account <provider-id>` (saves a typed-in bind account,
 then switches to an existing credential, logging each step),
+`--demo-provider-rename <provider-id> <name>` (after 3 s, through the
+editor's draft and `saveProvider`; logs where the folder went or why it
+was refused), `--demo-folder-rename <path> <new path>` (after 3 s),
 `--snapshot <dir>` with `--snapshot-after <secs>` (default 6),
 `--assume-keyboard`, `--unlock-vault`; defaults overrides
 `-vaultRequiresAuth NO`, `-demoCredentialSearch <text>` (credential pickers
@@ -271,7 +293,11 @@ as `Toolbox-*.ips` (JSON: header line, then body with `threads[].frames`).
   desktop unshown on an idle host. A layer only looks at a surface again
   when `contents` is set anew. Set the layer's frame inside a
   `CATransaction` with actions disabled, or it animates behind the window
-  edge on every resize step. `copy_region` remains for tests only.
+  edge on every resize step. `copy_region` remains for tests only. A
+  released surface's ID goes to the very next surface created, so a test
+  cannot ask "is the old one gone" by looking its ID up (another test's
+  surface answers); `surface_mark` in `tests/rdp_session.rs` puts a value
+  on the surface first and looks for that.
 - H.264 is decoded by `VideoToolboxDecoder` (hand-written FFI to
   VideoToolbox, CoreMedia, CoreVideo), synchronously, with no output
   format requested so the planes hold the stream's own samples; IronRDP
@@ -318,8 +344,52 @@ as `Toolbox-*.ips` (JSON: header line, then body with `threads[].frames`).
 - AD provider accounts typed into the provider are vault credentials with
   id `<providerId>#bind|admin|user`, folder = the provider's folder, tag
   `provider-account`. `AppModel.saveProvider(draft)` writes them before
-  the provider and deletes ones no longer used; deleting the provider
-  deletes them. Renaming a provider moves everything inside its folder.
+  the provider, into the folder the provider is in at that moment (its
+  save then moves them with the rest), and deletes ones no longer used;
+  deleting the provider deletes them.
+- One folder, one provider. The sidebar turns a folder path into a
+  provider node with `providers.first { $0.folder == path }`, so a second
+  provider in the same folder has no node (cannot be edited or deleted),
+  keeps syncing, and everything it generates is listed beside the first
+  one's: every AD computer twice. The store refuses that on every route
+  (`checked_provider` for saves, `check_provider_folders` for
+  `rename_folder` and `move_provider`), and the app calls
+  `validate_provider` before writing typed-in accounts so a refusal leaves
+  nothing in the vault. `separate_provider_folders` repairs older
+  documents in `open` (the folder stays with the provider named after it,
+  else with the first; any other gets `<location>/<its name>`, and is
+  renamed `<name> 2` when that is taken or a neighbour has the name): in
+  memory, the same way every time, saved by the next write. Do not write
+  in `open`; a failed open makes the app move the store aside as broken.
+- A provider's folder is its location plus its name (since 0.3.1).
+  `checked_provider` sets the last component from the name on every save,
+  so the `folder` a caller passes only says where the provider sits; a new
+  name or location is `move_folder_contents`. `rename_folder` on a
+  provider's own folder renames the provider (no menu does that today: a
+  provider's node has Edit…, not Rename…). A name cannot hold `/`. The
+  editor has Name and Location and nothing else (`ProviderDraft.parent`).
+  Up to 0.3.0 the folder kept the name the provider was created with, so
+  an older store can hold a folder named differently from its provider:
+  nothing changes that at open, the next save or move of that provider
+  does (`a_folder_from_an_older_version_takes_the_name_at_the_next_save`).
+  A rename into a folder that exists merges the two. `sync_provider` looks
+  the provider up again when the answer arrives: renamed or moved, the
+  results go to its folder of then; deleted, they are dropped.
+  `delete_provider` removes the folder when nothing else is in it, and a
+  credential assigned to it.
+- Sidebar expansion is AppKit's `autosaveExpandedItems`: an array of our
+  node ids under `NSOutlineView Items <autosaveName>` in the preferences.
+  Two things about it are in no documentation. AppKit looks the saved ids
+  up the moment autosave is switched on, so that has to happen after the
+  first `rebuild()` (end of `viewDidLoad`); switched on in `loadView` it
+  finds nothing, and the first expand then overwrites the list, which is
+  why 0.3.0 and earlier never reopened a folder. And it writes the list
+  only when something is expanded or collapsed, whole. A folder node's id
+  holds its path, so everything that renames or moves a folder or a
+  provider must send `AppModel.folderMoved`:
+  `SidebarOutlineController.folderMoved` hands the cached nodes on to the
+  new path (they keep their expansion and selection) and rewrites the
+  saved list.
 - Every DC in the AD domain used for testing presents a 1024-bit RSA LDAPS
   certificate (checked 2026-11-16); macOS refuses those, so verified LDAPS
   cannot work there until they are reissued. The working provider
@@ -342,19 +412,83 @@ certificate verification. Elsewhere: session restore (workspaces +
 layouts), broadcast input, jump hosts, port forwards, a Tasks concept like
 Royal's, terminal theme picker. Offered to the owner and not asked for:
 LDAP hardening (plain-LDAP fallback off by default, a key-size hint in the
-error, pinning an internal root CA).
+error, pinning an internal root CA); letting sidebar titles use the room
+kept for the key badge and the spinner when neither shows (names are cut
+38 points early in a narrow sidebar).
 
 ## Current state (update in every commit)
 
-As of 2026-11-20, on `main`. **Toolbox 0.3.0 (build 13) is published** as
-GitHub Release `v0.3.0`: built with `make release` on the desktop Mac,
-notarized (app and disk image), and checked from a quarantined copy of the
-DMG: accepted by Gatekeeper, no entitlements, no paths from the build Mac,
-and an RDP session with H.264 running under the hardened runtime against
-the local test server. `build/` was removed on that Mac afterwards at the
-owner's request; they install from the Releases page.
+As of 2026-11-23, on `main`. **This commit is Toolbox 0.3.1.** The release
+is built from it (`make release`, `make publish`) and the commit after it
+records how that went. The owner runs 0.3.0 from `/Applications` until
+they install 0.3.1 from the Releases page.
 
-This change set, asked for by the owner in one go:
+**0.3.1: providers and their folders.** The owner reported Active
+Directory computers listed twice (screenshot, 2026-11-23, "trace and
+resolve properly"), then asked for a provider's folder to follow its name,
+for the version to be as close to perfect as it can be, and for a release.
+
+- Cause of the duplicates: the owner's store holds two AD providers with
+  the same name in the same folder. Nothing in the store stopped that, and
+  the sidebar shows one provider per folder, so the second was invisible
+  (no way to edit or delete it) while it kept syncing and its computers
+  were listed beside the first one's. LDAP, the sync and the tree drawing
+  were all fine. How the second one was created cannot be reconstructed;
+  the likely route is a new provider whose name matched the first one's
+  folder, which up to 0.3.0 could differ from the first one's name.
+- One folder, one provider: enforced in `store.rs` on save, move and
+  folder rename; `validate_provider` lets the app refuse before it writes
+  typed-in accounts to the vault; `separate_provider_folders` puts
+  existing stores right on open, nothing deleted.
+- A provider's folder follows its name (see the invariants). The editor's
+  hidden folder name is gone.
+- Around it: deleting a provider tidies its empty folder and that folder's
+  credential; a sync that ends after a rename, move or delete does the
+  right thing, and its messages use the provider's name of then.
+- Sidebar: checking renames showed that no version so far reopened the
+  folders that were open (see the invariants). Fixed; open folders also
+  survive a rename or a move, and a fixture run keeps its own record.
+- Launch aids `--demo-provider-rename` and `--demo-folder-rename`.
+- A test, not the app: `connects_renders_inputs_and_resizes` failed about
+  one run in 25, and did so in the last `make test` before this commit.
+  It asked whether the old surface was gone after a resize by looking its
+  ID up, and found another test's surface under that ID (see RDP frames).
+  It marks the surface and looks for the mark now; the test binary passed
+  80 times in a row afterwards.
+
+Verified: 72 Rust tests (six new ones in the store, one of which replaces
+an older one), clippy clean. In the app, as a second instance against
+scratch fixtures, read from `--snapshot` pictures, the log and the store
+file: a rename through the editor's draft of the 1Password provider (its
+62 credentials move, the node and its subfolder stay open, the saved list
+names the new path without anything being toggled, a relaunch reopens the
+same tree) and of the AD provider with a typed-in bind account (the
+account and the generated connections move); a name that leads to another
+provider's folder refused before anything is written; a folder holding
+both providers moved; a store with two providers in one folder opened
+(two nodes, everything once, saved by the next sync); the tree reopened
+from a list written by hand, a child listed before its parents included.
+With the first fix: a copy of the installed 0.3.0 against such a fixture
+shows one node with every computer twice, as in the owner's screenshot;
+and against a copy of the owner's real store, counts only and nothing
+written, nearly every generated computer twice before and none after.
+
+Not verified: anything that takes a click (Save in the provider's sheet,
+dragging a provider, the refusal as a dialog, the folder rename prompt);
+those paths end in the same model calls the aids make. And nothing new
+against real infrastructure.
+
+**Left for the owner:** their store still has both providers. In 0.3.1
+the stray one appears as a second node with ` 2` after its name;
+right-click ▸ Delete removes it, its connections and its bind account.
+Nothing was changed in their app data, with one exception: early fixture
+runs on 2026-11-23, before fixture runs had a record of their own, wrote
+fixture ids into the saved list of open folders in the app's preferences.
+0.3.0 never read that list and replaces it at the next expand or
+collapse; ids that match nothing are ignored. 0.3.1 will at worst start
+with the folders closed once, as every version did until now.
+
+The 0.3.0 change set (2026-11-20), asked for by the owner in one go:
 
 - **RDP clipboard.** Text both ways; files and folders from the Mac to the
   remote desktop. `rdp_clipboard.rs`, `ClipboardSync` in `rdp.rs`, the
@@ -379,7 +513,7 @@ This change set, asked for by the owner in one go:
   `make release` checks. The 0.2.0 download still contains them.
 - README and CLAUDE.md pointed at the old repository address; fixed.
 
-Verified: 67 Rust tests (unit tests for the decoder against a stream from
+Verified for 0.3.0: 67 Rust tests (unit tests for the decoder against a stream from
 the system encoder, the surface, file lists and ranges; 11 end-to-end RDP
 tests covering plain updates, RemoteFX, the pipeline with H.264 and a
 pipeline resize, clipboard text both ways, time-outs, files, refusals),
@@ -406,5 +540,5 @@ names its holder by design.
 
 Release flow, unchanged: bump `VERSION`, add
 `docs/release-notes/<version>.md`, commit and push, `make release`,
-`make publish`. The owner installs from the Releases page; nothing needs
+`make publish`, then a commit that records the release here. The owner installs from the Releases page; nothing needs
 to stay in `build/`.

@@ -313,3 +313,56 @@ The properties above are tested against the in-process IronRDP server
 (67 Rust tests) and in the app against the local test server. If a host
 misbehaves with the newer graphics, View ▸ Remote Desktop ▸ Fast Graphics
 switches them off.
+
+
+## Addendum — 2026-11-23: providers and their folders (0.3.1)
+
+- **Finding.** The store accepted a provider whose folder already belonged
+  to another provider. The sidebar shows a provider as its folder, one per
+  folder, so the second had no node of its own: it could not be edited or
+  deleted, while it kept refreshing on its timer, binding to the directory
+  with the account stored for it, and listing every computer next to the
+  first provider's copy. Nothing left the Mac that would not have anyway,
+  but a stored account was in use with no place in the app to see or
+  remove it.
+- **Fixed.** The core refuses any save, move or folder rename that would
+  put a provider in a folder another provider owns, and says which
+  provider that is. The app asks the store before it writes the accounts
+  typed into a provider, so a refused provider leaves no credential and no
+  secret behind in the vault.
+- **Existing stores.** A document that already has two providers in one
+  folder is separated when opened. The folder stays with the provider it
+  is named after, or else with the first; any other gets a folder of its
+  own next to it, named after that provider (its name gains a 2, or the
+  next free number, when the name leads to a folder in use or is a
+  neighbouring provider's too), with what it generated and the accounts
+  typed into it. A credential assigned to the shared folder is assigned to
+  the new one as well, so a connection that inherited it resolves the same
+  credential as before and none gains one it did not have. Records only
+  change folder; nothing is deleted, vault ids stay the same and no secret
+  is read. Deleting the provider from there removes its connections, its
+  accounts and their secrets, as for any provider.
+- **A provider's folder follows its name** (new in 0.3.1). The folder is
+  the provider's location plus its name, set by the core on every save, so
+  the tree cannot show one thing and the store hold another. A rename
+  moves the folder with everything inside, credential assignments of the
+  folder and its subfolders included: what a connection inherits does not
+  change. Renaming into a folder that exists merges the two, as renaming a
+  plain folder always did; an assignment on the moved folder then replaces
+  the other folder's. A name cannot contain “/”.
+- **Leftovers.** Deleting a provider now removes its folder when nothing
+  else is in it, together with a credential assigned to that folder; until
+  now the assignment stayed behind, invisible, and would have applied to
+  the next folder created under that name. A refresh that ends after its
+  provider was deleted adds nothing (it used to leave what it fetched in
+  the store with no provider to remove it), and one that ends after a
+  rename or move files its results where the provider is by then.
+- **Sidebar state.** Which folders are open is kept in the app's
+  preferences as a list of node ids: folder paths and provider ids, no
+  hostnames from connections, no usernames, no secrets. A run against
+  another store (`TOOLBOX_STORE_PATH`) keeps its own list.
+- Tests: 72 Rust tests. The store's cover the refusals (new provider,
+  new location, move, folder rename), the separation on open, the folder
+  following the name, a store from an older version,
+  the folder credential on delete, and refreshes that end after a rename
+  or a delete.

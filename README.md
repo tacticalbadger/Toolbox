@@ -193,7 +193,8 @@ to Unlock Vault.
   providers as folders in place with what they generate underneath (an
   Active Directory provider shows its OU hierarchy), drag and drop between
   folders, and context menus on every node. The filter field above it
-  narrows the whole tree. Expansion is remembered.
+  narrows the whole tree. The folders that were open are open again at the
+  next launch, and stay open when a folder or provider is renamed or moved.
 - Credentials: username plus password or SSH key, kept encrypted in a local
   vault (key in the login Keychain, unlocked with Touch ID), fetched from
   1Password at connect time, or prompted for. A connection can pick an
@@ -213,6 +214,20 @@ to Unlock Vault.
   existing credential or a username and password typed into the provider,
   which is kept in the vault as a credential inside the provider's folder.
   Providers refresh at launch and on a timer, or on demand with ⌘R.
+  A provider's folder carries its name: renaming the provider renames the
+  folder, and everything inside moves along (the name cannot contain `/`;
+  Location says which folder the provider is in). A refresh that is
+  running while its provider is renamed or moved puts its results where
+  the provider is by then. Deleting a provider removes its folder too when
+  nothing else is in it.
+  A folder holds one provider: saving, moving or renaming a second one into
+  it is refused with the name of the provider that owns it. A store from
+  0.3.0 or earlier that has two in one folder (every computer then appeared
+  twice, and only one of the two providers could be reached) is put right
+  when it is opened: the second provider gets a folder of its own next to
+  the first, named after it (with a 2 added to its name when that name is
+  taken), with what it generated inside, and can be kept or deleted from
+  there.
 
 - RDP through IronRDP: NLA logon, full keyboard and mouse. Graphics come
   over the graphics pipeline when the host offers it (H.264 decoded by
@@ -267,6 +282,8 @@ connection on start, `--files <id>` to open its SFTP browser (both may repeat, e
 opening another pane), `--expand-all` to expand the whole sidebar tree, `--demo-move` to move the
 focused pane into a new workspace after launch, `--demo-close` to close the focused pane after launch,
 `--demo-split` to split it (which resizes what is in it),
+`--demo-provider-rename <id> <name>` and `--demo-folder-rename <path> <new path>` to rename a provider or a
+folder after launch and log the outcome,
 `--edit-connection <id|new>` and
 `--set-folder-credential <path>` to open those sheets at launch, `-demoCredentialSearch <text>` to open their
 credential pickers with a search typed, `--snapshot <dir>` (with `--snapshot-after <secs>`) to have the app save

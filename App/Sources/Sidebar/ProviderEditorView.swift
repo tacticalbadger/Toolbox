@@ -55,10 +55,8 @@ struct RoleCredentialDraft {
 struct ProviderDraft {
     var id = ""
     var name = ""
-    /// Folder the provider sits in; its own node is named after it.
+    /// Folder the provider sits in. Its own folder is this plus `name`.
     var parent = ""
-    /// Name of the provider's own folder node; follows `name` for new ones.
-    var leaf = ""
     var kind: ProviderKindChoice = .onePassword
     var autoRefreshMinutes = 60
     var opPath = ""
@@ -81,7 +79,6 @@ struct ProviderDraft {
         id = provider.id
         name = provider.name
         parent = (provider.folder as NSString).deletingLastPathComponent
-        leaf = (provider.folder as NSString).lastPathComponent
         autoRefreshMinutes = Int(provider.autoRefreshMinutes)
         lastSyncEpoch = provider.lastSyncEpoch
         lastStatus = provider.lastStatus
@@ -133,6 +130,7 @@ struct ProviderDraft {
 
     var validationError: String? {
         if name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give the provider a name." }
+        if name.contains("/") { return "The name can't contain “/”. Use Location for the folder the provider is in." }
         if kind == .activeDirectory {
             if server.trimmingCharacters(in: .whitespaces).isEmpty { return "Enter the domain controller to query." }
             if searchBase.trimmingCharacters(in: .whitespaces).isEmpty { return "Enter the search base, e.g. DC=corp,DC=example." }
@@ -203,13 +201,12 @@ struct ProviderDraft {
                                     acceptInvalidCerts: acceptInvalidCerts)
         }
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
-        let node = leaf.trimmingCharacters(in: .whitespaces).isEmpty ? trimmedName : leaf.trimmingCharacters(in: .whitespaces)
         let location = parent.trimmingCharacters(in: .whitespaces)
         return Provider(
             id: id,
             name: trimmedName,
             kind: kind,
-            folder: location.isEmpty ? node : "\(location)/\(node)",
+            folder: location.isEmpty ? trimmedName : "\(location)/\(trimmedName)",
             autoRefreshMinutes: UInt32(max(autoRefreshMinutes, 0)),
             lastSyncEpoch: lastSyncEpoch,
             lastStatus: lastStatus
@@ -231,7 +228,7 @@ struct ProviderEditorView: View {
                 Section("Provider") {
                     TextField("Name", text: $draft.name, prompt: Text(draft.kind.label))
                     TextField("Location", text: $draft.parent, prompt: Text("Top level; use / for subfolders"))
-                    Text("Appears as a folder named after the provider; what it generates lands inside.")
+                    Text("Appears as a folder with this name; what it generates lands inside. Renaming the provider renames the folder.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Picker("Source", selection: $draft.kind) {

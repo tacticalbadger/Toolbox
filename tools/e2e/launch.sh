@@ -5,7 +5,9 @@
 #   tools/e2e/launch.sh --connect echo --connect echo-1p
 # App args: --connect <id>, --files <id> (repeatable), --expand-all,
 # --demo-move, --demo-close, --demo-split, --edit-connection <id|new>,
-# --edit-provider <id|new>, --set-folder-credential <path>, --unlock-vault,
+# --edit-provider <id|new>, --demo-provider-rename <id> <name>,
+# --demo-folder-rename <path> <new path>,
+# --set-folder-credential <path>, --unlock-vault,
 # --snapshot <dir> [--snapshot-after <secs>], --assume-keyboard,
 # -demoCredentialSearch <text>.
 # This quits any Toolbox that is running. To leave one alone, start a second

@@ -150,6 +150,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 }
             }
         }
+        // Testing aid: rename a provider the way its editor would, shortly
+        // after launch, and log where its folder went (or why it stayed).
+        if let index = args.firstIndex(of: "--demo-provider-rename"), index + 2 < args.count {
+            let wanted = args[index + 1], name = args[index + 2]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                Task { @MainActor in
+                    guard let provider = AppModel.shared.provider(wanted) else {
+                        NSLog("provider-rename: no provider with id \(wanted)")
+                        return
+                    }
+                    var draft = ProviderDraft(provider)
+                    draft.name = name
+                    if let problem = draft.validationError {
+                        NSLog("provider-rename: refused by the editor: \(problem)")
+                        return
+                    }
+                    do {
+                        let stored = try await AppModel.shared.saveProvider(draft)
+                        NSLog("provider-rename: \(provider.folder) -> \(stored.folder), named \(stored.name)")
+                    } catch {
+                        NSLog("provider-rename: refused: \(describe(error))")
+                    }
+                }
+            }
+        }
+        // Testing aid: rename or move a folder shortly after launch.
+        if let index = args.firstIndex(of: "--demo-folder-rename"), index + 2 < args.count {
+            let from = args[index + 1], to = args[index + 2]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                do {
+                    try AppModel.shared.renameFolder(from, to: to)
+                    NSLog("folder-rename: \(from) -> \(to)")
+                } catch {
+                    NSLog("folder-rename: refused: \(describe(error))")
+                }
+            }
+        }
         if let index = args.firstIndex(of: "--set-folder-credential"), index + 1 < args.count {
             controller.setFolderCredential(args[index + 1])
         }

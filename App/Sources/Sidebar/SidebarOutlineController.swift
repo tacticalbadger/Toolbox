@@ -34,7 +34,8 @@ final class SidebarNode {
         case credential(Credential)
     }
 
-    let id: String
+    /// A folder's id holds its path, so it changes when the folder moves.
+    fileprivate(set) var id: String
     var kind: Kind
     var children: [SidebarNode] = []
     weak var parent: SidebarNode?
@@ -294,8 +295,6 @@ final class SidebarOutlineController: NSViewController, NSOutlineViewDataSource,
         outline.indentationPerLevel = 14
         outline.allowsMultipleSelection = true
         outline.allowsEmptySelection = true
-        outline.autosaveExpandedItems = true
-        outline.autosaveName = "sidebar.tree"
         outline.dataSource = self
         outline.delegate = self
         outline.target = self
@@ -350,7 +349,17 @@ final class SidebarOutlineController: NSViewController, NSOutlineViewDataSource,
         .receive(on: DispatchQueue.main)
         .sink { [weak self] in self?.rebuild() }
         .store(in: &cancellables)
+        model.folderMoved
+            .sink { [weak self] move in self?.folderMoved(from: move.from, to: move.to) }
+            .store(in: &cancellables)
         rebuild()
+        // What is expanded is saved by AppKit, which looks the saved nodes
+        // up the moment this is switched on: only now are there any to
+        // find. A store named in the environment (the end-to-end fixture)
+        // keeps its own record, so a run against it leaves the real tree's
+        // alone.
+        outline.autosaveName = model.usesDefaultStore ? "sidebar.tree" : "sidebar.tree.other-store"
+        outline.autosaveExpandedItems = true
     }
 
     // MARK: Tree
@@ -363,6 +372,32 @@ final class SidebarOutlineController: NSViewController, NSOutlineViewDataSource,
         let fresh = SidebarNode(id: id, kind: kind)
         cache[id] = fresh
         return fresh
+    }
+
+    /// Hands the nodes of a renamed or moved folder on to its new path, so
+    /// what was expanded or selected inside it stays that way.
+    private func folderMoved(from: String, to: String) {
+        let old = "folder:\(from)", new = "folder:\(to)"
+        func moved(_ id: String) -> String? {
+            id == old || id.hasPrefix(old + "/") ? new + id.dropFirst(old.count) : nil
+        }
+        let nodes = cache.filter { moved($0.key) != nil }
+        for id in nodes.keys { cache[id] = nil }
+        for (id, node) in nodes {
+            node.id = moved(id) ?? id
+            cache[node.id] = node
+        }
+        // AppKit saves the ids of what is expanded, but only when something
+        // is expanded or collapsed. Until then its list (an array of the
+        // ids under this key) would still name the old paths, and quitting
+        // first would reopen the moved folders closed.
+        if let name = outline.autosaveName {
+            let key = "NSOutlineView Items \(name)"
+            if let saved = UserDefaults.standard.stringArray(forKey: key) {
+                UserDefaults.standard.set(saved.map { moved($0) ?? $0 }, forKey: key)
+            }
+        }
+        rebuild()
     }
 
     private func matches(_ fields: [String?]) -> Bool {

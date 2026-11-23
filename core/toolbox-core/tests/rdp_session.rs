@@ -1,6 +1,6 @@
 //! End-to-end tests of `RdpSession` against the in-process RDP server.
 
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::SeqCst};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -132,12 +132,17 @@ extern "C" {
     fn IOSurfaceGetBytesPerRow(surface: *mut c_void) -> usize;
     fn IOSurfaceGetWidth(surface: *mut c_void) -> usize;
     fn IOSurfaceGetHeight(surface: *mut c_void) -> usize;
+    fn IOSurfaceSetValue(surface: *mut c_void, key: *const c_void, value: *const c_void);
+    fn IOSurfaceCopyValue(surface: *mut c_void, key: *const c_void) -> *const c_void;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRelease(cf: *const c_void);
+    fn CFStringCreateWithCString(allocator: *const c_void, text: *const c_char, encoding: u32) -> *const c_void;
 }
+
+const UTF8: u32 = 0x0800_0100; // kCFStringEncodingUTF8
 
 /// One BGRA pixel of the surface with this ID, read the way the app's
 /// layer gets at it: by looking the surface up. `None` when there is no
@@ -159,6 +164,32 @@ fn surface_pixel(id: u32, x: usize, y: usize) -> Option<[u8; 4]> {
         }
         CFRelease(surface.cast_const());
         pixel
+    }
+}
+
+/// Whether the surface with this ID carries the test's mark, which `set`
+/// puts on it first. This is how to ask whether a surface is gone: its ID
+/// goes to the next surface that is made, here or in a test running
+/// beside this one, so a look-up of an old ID may well find something.
+fn surface_mark(id: u32, set: bool) -> bool {
+    // SAFETY: the surface is checked for null; the key is a valid string
+    // for both calls, and everything created or copied is released.
+    unsafe {
+        let surface = IOSurfaceLookup(id);
+        if surface.is_null() {
+            return false;
+        }
+        let key = CFStringCreateWithCString(std::ptr::null(), c"toolbox.test.mark".as_ptr(), UTF8);
+        if set {
+            IOSurfaceSetValue(surface, key, key);
+        }
+        let value = IOSurfaceCopyValue(surface, key);
+        if !value.is_null() {
+            CFRelease(value);
+        }
+        CFRelease(key);
+        CFRelease(surface.cast_const());
+        !value.is_null()
     }
 }
 
@@ -206,6 +237,8 @@ fn connects_renders_inputs_and_resizes() {
     });
 
     // Resize through Display Control: a new desktop, on a new surface.
+    assert!(surface_mark(first_surface, true));
+    assert!(surface_mark(first_surface, false), "the mark stays on the surface");
     session.resize(800, 600, 100);
     wait_until("resize", 20, || seen.resized_to() == Some((800, 600)));
     assert_eq!(session.frame_size().width, 800);
@@ -213,7 +246,7 @@ fn connects_renders_inputs_and_resizes() {
     assert_ne!(seen.surface(), first_surface);
     wait_until("frame after resize", 10, || surface_pixel(seen.surface(), 799, 599) == Some(FILL));
     // The old surface is gone once nothing shows it.
-    assert_eq!(surface_pixel(first_surface, 0, 0), None);
+    assert!(!surface_mark(first_surface, false), "the first surface is still there");
 
     // Without the clipboard, its calls are accepted and do nothing.
     session.clipboard_offer(true, vec!["/etc/hosts".into()]);

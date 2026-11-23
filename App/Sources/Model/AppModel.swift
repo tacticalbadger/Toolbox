@@ -13,9 +13,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var folders: [String] = []
     /// Credential id assigned to a folder, by path.
     @Published private(set) var folderCredentials: [String: String] = [:]
+    /// A folder that was renamed or moved with everything in it, sent once
+    /// the lists above are up to date.
+    let folderMoved = PassthroughSubject<(from: String, to: String), Never>()
 
     let store: ConnectionStore
     let storeURL: URL
+    /// False when `TOOLBOX_STORE_PATH` names another store.
+    let usesDefaultStore: Bool
 
     static let supportDirectory: URL = {
         let dir = FileManager.default
@@ -35,8 +40,10 @@ final class AppModel: ObservableObject {
     private init() {
         if let override = ProcessInfo.processInfo.environment["TOOLBOX_STORE_PATH"], !override.isEmpty {
             storeURL = URL(fileURLWithPath: override)
+            usesDefaultStore = false
         } else {
             storeURL = Self.supportDirectory.appendingPathComponent("connections.json")
+            usesDefaultStore = true
         }
         store = Self.openStore(at: storeURL)
         reload()
@@ -80,8 +87,9 @@ final class AppModel: ObservableObject {
     }
 
     func renameFolder(_ path: String, to newPath: String) throws {
-        _ = try store.renameFolder(from: path, to: newPath)
+        let renamed = try store.renameFolder(from: path, to: newPath)
         reload()
+        if renamed != path { folderMoved.send((path, renamed)) }
         ProviderSync.shared.scheduleAutoRefresh()
     }
 
@@ -118,9 +126,17 @@ final class AppModel: ObservableObject {
     }
 
     func moveProvider(_ provider: Provider, to parent: String?) throws {
+        let before = store.getProvider(id: provider.id)?.folder
         try store.moveProvider(id: provider.id, parent: parent)
         reload()
+        announceFolder(of: provider.id, was: before)
         ProviderSync.shared.scheduleAutoRefresh()
+    }
+
+    /// Sends `folderMoved` when a provider's folder is no longer `before`.
+    private func announceFolder(of providerId: String, was before: String?) {
+        guard let before, let now = provider(providerId)?.folder, now != before else { return }
+        folderMoved.send((before, now))
     }
 
     // MARK: Connections
@@ -220,21 +236,29 @@ final class AppModel: ObservableObject {
         providers.first { $0.id == id }
     }
 
+    /// Saves the record. The provider's folder is named after it, so a new
+    /// name or location moves the folder and what is inside.
     @discardableResult
     func saveProvider(_ provider: Provider) throws -> Provider {
+        let before = provider.id.isEmpty ? nil : store.getProvider(id: provider.id)?.folder
         let stored = try store.upsertProvider(provider: provider)
         reload()
+        announceFolder(of: stored.id, was: before)
         ProviderSync.shared.scheduleAutoRefresh()
         return stored
     }
 
     /// Saves a provider from its editor: accounts typed into the provider are
     /// written to the vault first, then the provider, then accounts it no
-    /// longer uses are removed.
+    /// longer uses are removed. A provider the store would refuse (its folder
+    /// belongs to another one, say) is refused before any account is written.
     @discardableResult
     func saveProvider(_ draft: ProviderDraft) async throws -> Provider {
-        let record = draft.provider()
-        for account in draft.managedAccounts(folder: record.folder) {
+        let record = try store.validateProvider(provider: draft.provider())
+        // The accounts go where the provider is now; a new name or location
+        // then moves them along with the rest of its folder.
+        let folder = store.getProvider(id: record.id)?.folder ?? record.folder
+        for account in draft.managedAccounts(folder: folder) {
             let secret = Secret(password: account.password, privateKey: nil, passphrase: nil)
             try await saveCredential(account.credential, secret: secret)
         }
