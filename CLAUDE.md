@@ -184,7 +184,10 @@ an RDP desktop), `--edit-connection <id|new>`,
 then switches to an existing credential, logging each step),
 `--demo-provider-rename <provider-id> <name>` (after 3 s, through the
 editor's draft and `saveProvider`; logs where the folder went or why it
-was refused), `--demo-folder-rename <path> <new path>` (after 3 s),
+was refused; a fresh fixture has no password in the vault for `ad-fake`'s
+bind account, so that save is refused unless `--demo-provider-account
+ad-fake` runs alongside, and `op-fake` has no such account),
+`--demo-folder-rename <path> <new path>` (after 3 s),
 `--snapshot <dir>` with `--snapshot-after <secs>` (default 6),
 `--assume-keyboard`, `--unlock-vault`; defaults overrides
 `-vaultRequiresAuth NO`, `-demoCredentialSearch <text>` (credential pickers
@@ -418,10 +421,18 @@ kept for the key badge and the spinner when neither shows (names are cut
 
 ## Current state (update in every commit)
 
-As of 2026-11-23, on `main`. **This commit is Toolbox 0.3.1.** The release
-is built from it (`make release`, `make publish`) and the commit after it
-records how that went. The owner runs 0.3.0 from `/Applications` until
-they install 0.3.1 from the Releases page.
+As of 2026-11-23, on `main`. **Toolbox 0.3.1 (build 15) is published** as
+GitHub Release `v0.3.1`; the tag is on the commit before this one. Built
+with `make release` on the desktop Mac, notarized (app and disk image),
+and checked from a quarantined copy of the DMG: accepted by Gatekeeper,
+hardened runtime, no entitlements, no paths from the build Mac. The files
+downloaded back from the release match `SHA256SUMS`. That copy of the app
+then ran as a second instance against a fresh fixture and the local
+servers: an RDP session showing the H.264 picture, an SSH pane, and the
+provider-account, provider-rename and folder-rename aids, with the same
+results as the debug build. The owner runs 0.3.0 from `/Applications`
+until they install 0.3.1 from the Releases page; `build/` on the desktop
+Mac holds the release build and can go.
 
 **0.3.1: providers and their folders.** The owner reported Active
 Directory computers listed twice (screenshot, 2026-11-23, "trace and
@@ -450,7 +461,7 @@ for the version to be as close to perfect as it can be, and for a release.
   survive a rename or a move, and a fixture run keeps its own record.
 - Launch aids `--demo-provider-rename` and `--demo-folder-rename`.
 - A test, not the app: `connects_renders_inputs_and_resizes` failed about
-  one run in 25, and did so in the last `make test` before this commit.
+  one run in 25, and did so in the last `make test` before the release.
   It asked whether the old surface was gone after a resize by looking its
   ID up, and found another test's surface under that ID (see RDP frames).
   It marks the surface and looks for the mark now; the test binary passed
