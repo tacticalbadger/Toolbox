@@ -217,6 +217,14 @@ as `Toolbox-*.ips` (JSON: header line, then body with `threads[].frames`).
   commit metadata. Write "the owner" in these notes.
   Never commit `build/`, `core/target/`, `App/.build/`, generated bindings
   or `App/Vendor/` (all gitignored); binaries are not shared through git.
+- **The license is proprietary** (the owner, 2026-11-23, for every public
+  repository on the account: "the most restricting license my code can
+  have"). `LICENSE` is all rights reserved, with one permission: to run
+  the builds the owner hands out. Its copyright line carries the account
+  name `tacticalbadger`, which the owner chose over a real name so that
+  the rule above holds. Do not add an open-source license or a `license`
+  field to a manifest, and keep the README's License section in step with
+  `LICENSE`. Third-party components keep their own licenses.
 - Keep `README.md` "What works" and `docs/SECURITY-REVIEW.md` (an addendum
   per security-relevant change) current.
 - Secrets never go in `connections.json`; they live in the vault,
@@ -420,6 +428,13 @@ kept for the key badge and the spinner when neither shows (names are cut
 38 points early in a narrow sidebar).
 
 ## Current state (update in every commit)
+
+**License, 2026-11-23, on the owner's word and pushed:** `LICENSE` added
+(proprietary, see Conventions), a License section in `README.md`, and the
+`license = "MIT"` line taken out of `core/toolbox-core/Cargo.toml`. No
+code changed, so `make test` was not run for this commit; `cargo metadata`
+still reads the manifest. It was made from a fresh clone, not from a
+working copy: pull before other work.
 
 As of 2026-11-23, on `main`. **Toolbox 0.3.1 (build 15) is published** as
 GitHub Release `v0.3.1`; the tag is on the commit before this one. Built

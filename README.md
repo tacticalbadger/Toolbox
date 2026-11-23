@@ -305,3 +305,12 @@ certificate verification, session restore, broadcast input, jump hosts and
 port forwards.
 
 `docs/royalts-reference/` holds the Royal TSX scripts the providers replace.
+
+## License
+
+Toolbox is proprietary software, not open source. Copyright (c) 2026
+tacticalbadger. All rights reserved.
+
+The source is public so that it can be read. You may download and run the
+released app. Copying, changing or redistributing the code or the app needs
+written permission. The terms are in [`LICENSE`](LICENSE).
