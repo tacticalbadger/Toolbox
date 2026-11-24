@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         RdpPreferences.registerDefaults()
         MainMenu.install()
         _ = AppModel.shared
+        Updates.shared.start()
         // Double-clicking a workspace tab renames it. The first click of the
         // pair has already selected the tab, so the key window is the one.
         tabClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
@@ -61,6 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         VaultManager.shared.requiresAuthentication.toggle()
     }
 
+    @objc func toggleAutomaticUpdateChecks(_ sender: Any?) {
+        Updates.shared.checksAutomatically.toggle()
+    }
+
     /// The View ▸ Remote Desktop switches; each item carries its
     /// `RdpPreferences` key.
     @objc func toggleRemoteDesktopPreference(_ sender: NSMenuItem) {
@@ -94,6 +99,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             let delay = args.firstIndex(of: "--snapshot-after").flatMap { $0 + 1 < args.count ? Double(args[$0 + 1]) : nil } ?? 6
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 Snapshot.write(to: directory)
+            }
+        }
+        // Testing aid for the update rehearsal (tools/e2e/update-rehearsal.sh):
+        // `--updater-feed <url>` makes this run look for updates in that
+        // feed (a run against a test store looks nowhere otherwise), and
+        // `--demo-update` looks two seconds after launch instead of at the
+        // next scheduled time.
+        if args.contains("--demo-update") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                NSLog("updates: looking for an update (active: \(Updates.shared.isActive))")
+                Updates.shared.checkInBackground()
+            }
+        }
+        // And `--demo-update-window` does what Toolbox ▸ Check for Updates…
+        // does, so `--snapshot` can show the window a user gets.
+        if args.contains("--demo-update-window") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                Updates.shared.checkForUpdates(nil)
             }
         }
         // Testing aids: `--local-terminal` opens a terminal on this Mac the
@@ -372,6 +395,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     // MARK: App menu
 
+    @objc func checkForUpdates(_ sender: Any?) {
+        Updates.shared.checkForUpdates(sender)
+    }
+
     @objc func showAbout(_ sender: Any?) {
         NSApp.orderFrontStandardAboutPanel(options: [
             .applicationName: "Toolbox",
@@ -398,6 +425,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         if menuItem.action == #selector(toggleVaultAuthentication(_:)) {
             menuItem.state = VaultManager.shared.requiresAuthentication ? .on : .off
+        }
+        if menuItem.action == #selector(toggleAutomaticUpdateChecks(_:)) {
+            menuItem.state = Updates.shared.checksAutomatically ? .on : .off
+            return Updates.shared.isActive
+        }
+        if menuItem.action == #selector(checkForUpdates(_:)) {
+            return Updates.shared.canCheckForUpdates
         }
         if menuItem.action == #selector(toggleRemoteDesktopPreference(_:)), let key = menuItem.representedObject as? String {
             menuItem.state = UserDefaults.standard.bool(forKey: key) ? .on : .off

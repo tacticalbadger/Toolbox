@@ -49,7 +49,8 @@ Fetched automatically on first build (network needed once):
 
 - Rust crates from crates.io, plus IronRDP from GitHub pinned to one
   revision in `core/toolbox-core/Cargo.toml`.
-- Swift packages: SwiftTerm 1.99.3 and RoyalVNCKit (pinned revision), from
+- Swift packages: SwiftTerm 1.99.3, RoyalVNCKit (pinned revision) and
+  Sparkle 2.10.1 (the updater, a prebuilt framework), from
   `App/Package.swift` and `App/Package.resolved`.
 
 Optional:
@@ -137,19 +138,69 @@ One-time setup on the Mac that makes releases:
 
    The Team ID is shown in the certificate's name and at
    developer.apple.com ▸ Membership.
+3. **The update key.** Installed copies take an update only if it is
+   signed with one particular key (see "Updates" below). Its private half
+   has to be in the login keychain of the Mac that makes the release. On
+   the Mac that already has it:
+
+   ```sh
+   App/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account toolbox-update-key -x update-key.txt
+   ```
+
+   and on the other one, after carrying the file over (a password manager
+   is a good way; it is also the backup):
+
+   ```sh
+   App/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account toolbox-update-key -f update-key.txt
+   ```
+
+   Delete the file afterwards. The first `make release` on a Mac makes
+   macOS ask whether `generate_appcast` may use the key: choose Always
+   Allow. Never create a second key: copies in use trust the one whose
+   public half is in `bridge/update-config.sh`, and `make release` refuses
+   to go on with any other.
 
 Then, for each release:
 
 ```sh
-echo 0.3.0 > VERSION   # when the version should change
-make release           # several minutes: release build, sign, notarize twice, staple
-make publish           # GitHub Release v0.3.0 with the DMG, zip and checksums
+echo 0.5.0 > VERSION   # when the version should change
+make release           # several minutes: release build, sign, notarize twice, staple, sign the update, write the feed
+make publish           # GitHub Release v0.5.0 with the DMG, zip, checksums and the update feed
 ```
 
 `make publish` refuses anything that is not notarized, tags the current
 commit (push it first) and writes the release notes: the standard install
 text plus the bullets in `docs/release-notes/<version>.md` if you add that
-file. `REPLACE=1 make publish` re-uploads an existing release's files.
+file. The same bullets are what the update window shows.
+`REPLACE=1 make publish` re-uploads an existing release's files.
+
+### Updates
+
+From 0.5.0 on the app updates itself (with [Sparkle](https://sparkle-project.org)).
+Publishing a release is what sends an update out: `make release` signs
+the zip with the update key and writes `build/release/appcast.xml`, a
+small signed feed that names the version, its release notes and where the
+zip is; `make publish` attaches it to the GitHub Release. Installed copies
+read `https://github.com/<owner>/Toolbox/releases/latest/download/appcast.xml`
+once a day, so the newest release's feed is always the one they see, and
+there is no server to run.
+
+Two things follow from how it is secured. The feed and the zip are both
+checked against the public key built into the app, so someone who gets
+into the GitHub account can withhold an update but cannot supply one. And
+if the private key is ever lost, no installed copy can be updated over the
+air again: everyone downloads a build by hand once more. Keep a copy of it
+somewhere safe.
+
+Versions before 0.5.0 have no updater and are replaced by hand one last
+time. A release that is published without its feed (an older checkout, a
+script that skipped it) silently stops updates for everyone until the next
+good one, which is why `make publish` refuses to go on without the file.
+
+`tools/e2e/update-rehearsal.sh` rehearses a whole update with nothing real
+in it (a throwaway key, two made-up versions of the current build, a feed
+served from this Mac) and checks that the old copy becomes the new one,
+and that an archive or a feed altered after signing is refused.
 
 Once the Developer ID is in the keychain, plain `make app` signs with it
 as well (without the timestamp and hardened runtime that only releases
@@ -213,6 +264,12 @@ to Unlock Vault.
   put text on the clipboard but cannot read it.
 - ⌘F searches the text and scrollback of a terminal, SSH or local (⌘G and
   ⌘⇧G for the next and previous match, ⌘E to search for the selection).
+- Updates over the air (from 0.5.0): the app looks for a new version once
+  a day and from Toolbox ▸ Check for Updates…, shows what changed and
+  installs it when you agree. The app restarts for that and asks first when
+  sessions are open. Toolbox ▸ Check for Updates Automatically switches the
+  daily look off. An update is taken only if it carries the developer's
+  signature; see `docs/SECURITY-REVIEW.md`.
 - A sidebar tree like Royal TS: folders you create (nest them with `/`),
   providers as folders in place with what they generate underneath (an
   Active Directory provider shows its OU hierarchy), drag and drop between
@@ -308,6 +365,8 @@ first local terminal (`--demo-type-after <secs>` says when; only in a run agains
 environment), `--demo-merge` to bring every tab's sessions into the first one as panes,
 `--demo-select-tab <n>` to show that tab for three seconds and then the last one again,
 `--demo-key <letter>` to press ⌘ and that letter the way the keyboard would (a capital adds ⇧; may repeat),
+`--updater-feed <url>` to have a run against a throwaway store look for updates in that feed (such a run looks
+nowhere otherwise), `--demo-update` to look right away and `--demo-update-window` to do what Check for Updates… does,
 `--demo-filter-paste <id>` to press ⌘V in the sidebar's filter before and after that connection is opened
 and log where it went (the app has to be frontmost; the clipboard is put back),
 `--expand-all` to expand the whole sidebar tree, `--demo-move` to move the

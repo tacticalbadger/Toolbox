@@ -9,6 +9,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIG="${CONFIG:-debug}"
 APP="$ROOT/build/Toolbox.app"
 unset DEVELOPER_DIR
+# Where updates come from and the key they are checked against.
+source "$ROOT/bridge/update-config.sh"
 
 # The Command Line Tools lack SwiftUI's macro plugin; borrow Xcode's copy.
 SWIFT_FLAGS=()
@@ -93,6 +95,38 @@ for dylib in "$BIN_DIR"/*.dylib; do
   codesign "${SIGN_FLAGS[@]}" "$APP/Contents/Frameworks/$(basename "$dylib")" >/dev/null
 done
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Toolbox" 2>/dev/null || true
+
+# Sparkle (over-the-air updates) is a framework with helper programs inside.
+# The app is not sandboxed, so Sparkle's two XPC services are never used
+# and are left out of the bundle. What remains is signed from the inside
+# out, each piece by itself: that order is what Sparkle's documentation
+# gives, and it warns against --deep.
+if [[ -d "$BIN_DIR/Sparkle.framework" ]]; then
+  SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+  ditto "$BIN_DIR/Sparkle.framework" "$SPARKLE"
+  rm -rf "$SPARKLE/Versions/B/XPCServices" "$SPARKLE/XPCServices"
+  # Headers and module maps are for building against the framework.
+  for part in Headers PrivateHeaders Modules; do
+    rm -rf "$SPARKLE/Versions/B/$part" "$SPARKLE/$part"
+  done
+  codesign "${SIGN_FLAGS[@]}" "$SPARKLE/Versions/B/Autoupdate" >/dev/null 2>&1
+  codesign "${SIGN_FLAGS[@]}" "$SPARKLE/Versions/B/Updater.app" >/dev/null 2>&1
+  codesign "${SIGN_FLAGS[@]}" "$SPARKLE" >/dev/null 2>&1
+  # Sparkle's license asks that its notice travels with every copy.
+  if [[ -f "$SPARKLE_BIN/../LICENSE" ]]; then
+    mkdir -p "$APP/Contents/Resources/Licenses"
+    cp "$SPARKLE_BIN/../LICENSE" "$APP/Contents/Resources/Licenses/Sparkle.txt"
+  fi
+fi
+
+# With a binary framework in the package, SwiftPM leaves a search path into
+# its own build folder in the executable. The bundle has no use for it, and
+# in a release it would name the Mac the build was made on.
+while read -r rpath; do
+  if [[ "$rpath" == "$ROOT"/* ]]; then
+    install_name_tool -delete_rpath "$rpath" "$APP/Contents/MacOS/Toolbox" 2>/dev/null
+  fi
+done < <(otool -l "$APP/Contents/MacOS/Toolbox" | awk '/LC_RPATH/ {getline; getline; print $2}')
 cp "$ROOT/App/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 # Shown when macOS asks whether the app may read a protected folder.
@@ -117,6 +151,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSSupportsAutomaticTermination</key><false/>
   <key>NSSupportsSuddenTermination</key><false/>
+  <key>SUFeedURL</key><string>$UPDATE_FEED_URL</string>
+  <key>SUPublicEDKey</key><string>$UPDATE_PUBLIC_KEY</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SURequireSignedFeed</key><true/>
+  <key>SUVerifyUpdateBeforeExtraction</key><true/>
   <key>NSDesktopFolderUsageDescription</key><string>$FILES_PURPOSE</string>
   <key>NSDocumentsFolderUsageDescription</key><string>$FILES_PURPOSE</string>
   <key>NSDownloadsFolderUsageDescription</key><string>$FILES_PURPOSE</string>

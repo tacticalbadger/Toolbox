@@ -7,6 +7,9 @@ enum MainMenu {
         // Application
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Toolbox", action: #selector(AppDelegate.showAbout(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Check for Updates…", action: #selector(AppDelegate.checkForUpdates(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Check for Updates Automatically",
+                        action: #selector(AppDelegate.toggleAutomaticUpdateChecks(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Lock Vault", action: #selector(AppDelegate.lockVault(_:)), keyEquivalent: "")
         appMenu.addItem(withTitle: "Require Touch ID to Unlock Vault",

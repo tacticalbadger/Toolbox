@@ -12,6 +12,10 @@
 #        xcrun notarytool store-credentials toolbox-notary \
 #          --apple-id <you@example.com> --team-id <TEAMID>
 #      (it asks for an app-specific password from account.apple.com).
+#   3. The update key in the login keychain (see bridge/update-config.sh):
+#      installed copies take an update only if it is signed with it. The
+#      first time, macOS asks whether generate_appcast may use the key:
+#      choose Always Allow.
 #
 #   make release                      # everything
 #   NOTARIZE=0 make release           # sign and package only
@@ -19,6 +23,7 @@
 #   TOOLBOX_SIGN_IDENTITY=<sha1|name> # pick among several Developer IDs
 #   ALLOW_ADHOC=1 NOTARIZE=0          # rehearse the pipeline without a certificate
 #   ALLOW_BUILD_PATHS=1               # keep going if the binary names this Mac (never for a published build)
+#   TOOLBOX_UPDATE_KEY_FILE=<file>    # take the update key from a file instead of the keychain
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,6 +31,7 @@ APP="$ROOT/build/Toolbox.app"
 NOTARY_PROFILE="${NOTARY_PROFILE:-toolbox-notary}"
 NOTARIZE="${NOTARIZE:-1}"
 unset DEVELOPER_DIR
+source "$ROOT/bridge/update-config.sh"
 
 step() { printf '\n==> %s\n' "$*"; }
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -97,12 +103,18 @@ if [[ "$TOOLBOX_SIGN_IDENTITY" != "-" ]]; then
   # Apple refuses to notarize signatures without a secure timestamp; catch
   # that here instead of after a round trip to the notary service.
   while IFS= read -r -d '' item; do
+    # Only code carries a signature of its own; a framework also holds
+    # property lists, strings and pictures.
+    kind="$(file -b "$item")"
+    [[ "$kind" == *"Mach-O"* ]] || continue
     # Capture first: piping into `grep -q` trips pipefail when grep exits early.
     details="$(codesign -dvv "$item" 2>&1 || true)"
     [[ "$details" == *$'\n'"Timestamp="* ]] \
       || fail "no secure timestamp in the signature of ${item#"$APP"/}"
+    [[ "$details" == *"flags="*"runtime"* ]] \
+      || fail "${item#"$APP"/} is not signed with the hardened runtime"
   done < <(find "$APP/Contents/MacOS" "$APP/Contents/Frameworks" -type f -print0)
-  echo "secure timestamps: present"
+  echo "secure timestamps and hardened runtime on every executable: present"
 fi
 
 notarize() { # $1 = file to submit
@@ -130,7 +142,9 @@ fi
 
 # --- package ----------------------------------------------------------------
 step "Packaging"
-ditto -c -k --keepParent "$APP" "$OUT/$NAME.zip"
+# The zip is also what installed copies download as an update; Sparkle asks
+# for these options so nothing about the bundle changes in the archive.
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/$NAME.zip"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 cp -R "$APP" "$STAGE/"
@@ -146,6 +160,64 @@ if [[ "$NOTARIZE" == "1" ]]; then
   step "Gatekeeper assessment"
   spctl --assess --type execute --verbose=2 "$APP"
   spctl --assess --type open --context context:primary-signature --verbose=2 "$OUT/$NAME.dmg"
+fi
+
+# --- the update feed ---------------------------------------------------------
+# Installed copies read build/release/appcast.xml from the newest GitHub
+# Release (make publish uploads it) and download the zip it names. Both are
+# signed here with the update key; the app refuses either without it.
+step "Signing the update and writing the feed"
+HAVE_KEY="$("$SPARKLE_BIN/generate_keys" --account "$UPDATE_KEY_ACCOUNT" -p 2>/dev/null || true)"
+KEY_ARGS=(--account "$UPDATE_KEY_ACCOUNT")
+if [[ -n "${TOOLBOX_UPDATE_KEY_FILE:-}" ]]; then
+  KEY_ARGS=(--ed-key-file "$TOOLBOX_UPDATE_KEY_FILE")
+elif [[ "$HAVE_KEY" != "$UPDATE_PUBLIC_KEY" ]]; then
+  if [[ "$NOTARIZE" == "1" ]]; then
+    fail "the update key is not in this Mac's keychain (account $UPDATE_KEY_ACCOUNT), or is a different key.
+       Without it nobody's copy can be updated. Bring it over from the Mac that has it:
+         $SPARKLE_BIN/generate_keys --account $UPDATE_KEY_ACCOUNT -x <file>     there
+         $SPARKLE_BIN/generate_keys --account $UPDATE_KEY_ACCOUNT -f <file>     here
+       or set TOOLBOX_UPDATE_KEY_FILE to a file that holds it."
+  fi
+  KEY_ARGS=()
+  echo "no update key on this Mac: no feed (this build cannot be published)"
+fi
+if [[ "${#KEY_ARGS[@]}" -gt 0 ]]; then
+  FEED_STAGE="$(mktemp -d)"
+  trap 'rm -rf "$STAGE" "$FEED_STAGE"' EXIT
+  cp "$OUT/$NAME.zip" "$FEED_STAGE/"
+  # Release notes with the archive's name are shown in the update window.
+  [[ -f "$ROOT/docs/release-notes/$VERSION.md" ]] && cp "$ROOT/docs/release-notes/$VERSION.md" "$FEED_STAGE/$NAME.md"
+  "$SPARKLE_BIN/generate_appcast" "${KEY_ARGS[@]}" \
+    --download-url-prefix "https://github.com/$UPDATE_REPO/releases/download/v$VERSION/" \
+    --link "https://github.com/$UPDATE_REPO/releases" \
+    --embed-release-notes --maximum-versions 1 -o "$OUT/appcast.xml" "$FEED_STAGE" \
+    || fail "generate_appcast could not write the feed"
+  # What every installed copy will do with it: check the archive's
+  # signature against the public key in the app. A release signed with any
+  # other key would be refused by all of them.
+  FEED_SIGNATURE="$(sed -nE 's/.*sparkle:edSignature="([^"]+)".*/\1/p' "$OUT/appcast.xml" | head -1)"
+  APP_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP/Contents/Info.plist")"
+  [[ -n "$FEED_SIGNATURE" ]] || fail "the feed names no signed archive"
+  VERDICT="$(swift - "$APP_KEY" "$FEED_SIGNATURE" "$OUT/$NAME.zip" <<'SWIFT' 2>/dev/null || true
+import CryptoKit
+import Foundation
+let arguments = CommandLine.arguments
+guard arguments.count == 4,
+      let keyData = Data(base64Encoded: arguments[1]),
+      let signature = Data(base64Encoded: arguments[2]),
+      let archive = FileManager.default.contents(atPath: arguments[3]),
+      let key = try? Curve25519.Signing.PublicKey(rawRepresentation: keyData) else {
+    print("unreadable")
+    exit(1)
+}
+print(key.isValidSignature(signature, for: archive) ? "valid" : "INVALID")
+SWIFT
+)"
+  [[ "$VERDICT" == "valid" ]] \
+    || fail "the archive's signature does not verify against the key in the app ($VERDICT): installed copies would refuse this update"
+  grep -q "v$VERSION/$NAME.zip" "$OUT/appcast.xml" || fail "the feed does not point at this release's archive"
+  echo "archive signature verifies against the key in the app; feed written"
 fi
 
 shasum -a 256 "$OUT/$NAME.dmg" "$OUT/$NAME.zip" | sed "s|$OUT/||" > "$OUT/SHA256SUMS"

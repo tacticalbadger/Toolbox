@@ -12,8 +12,9 @@ Toolbox is a macOS native replacement for Termius + Royal TSX for the owner
 SSH terminals and local shells, RDP and VNC with dynamic resolution, file
 transfer; every session in a workspace tab of its own, with split panes for
 putting sessions side by side; connection objects in a Royal-style folder tree, a
-credential vault with Touch ID, SSH key identities, and dynamic folders fed
-by 1Password (`op` CLI) and Active Directory. Royal TS reference material
+credential vault with Touch ID, SSH key identities, dynamic folders fed
+by 1Password (`op` CLI) and Active Directory, and updates over the air
+(Sparkle). Royal TS reference material
 the owner provided is in `docs/royalts-reference/`. The owner's Royal layout to
 mirror: document "Work" → folder "ACME" → dynamic folders "1Password" and the
 AD provider (OU hierarchy), folder "Jump Boxes".
@@ -53,7 +54,8 @@ directly and do not create feature branches unless they ask. The old
   `--graphics-pipeline`, `--paste`, `--copy-text`) and `ftp_server`
   (`--port`, `--tls`), all demo/secret. `tests/data/quadrants.h264` is the
   H.264 test stream; `tools/make-h264-fixture.swift` regenerates it.
-- `App/` — SwiftPM package. AppKit shell: `App/` (delegate, menu),
+- `App/` — SwiftPM package. AppKit shell: `App/` (delegate, menu,
+  `Updates.swift`: the Sparkle updater),
   `Workspace/` (window = workspace tab, `PaneContainerViewController`,
   `PaneView`, `PaneLayout`), `Terminal/` (SwiftTerm: `TerminalSessionView`
   for SSH, `LocalTerminalView` for a shell on this Mac), `Remote/` (RDP via
@@ -67,11 +69,15 @@ directly and do not create feature branches unless they ask. The old
   `Vendor/` are produced by `make core` and gitignored.
 - `bridge/` — build scripts: `build-core.sh`, `bundle-app.sh`,
   `signing-identity.sh`, `release.sh` (`make release`), `publish.sh`
-  (`make publish`: GitHub Release with the notarized DMG), `make-icon.swift`.
+  (`make publish`: GitHub Release with the notarized DMG and the update
+  feed), `update-config.sh` (where updates come from and the public half
+  of the key they are checked against; the other scripts source it),
+  `make-icon.swift`.
   `VERSION` holds the marketing version; the build number is the commit
   count.
 - `tools/e2e/` — end-to-end harness (fixture, test servers, launch,
-  capture). `docs/SECURITY-REVIEW.md` — review findings and addenda.
+  capture, `update-rehearsal.sh`: a whole over-the-air update with nothing
+  real in it). `docs/SECURITY-REVIEW.md` — review findings and addenda.
 
 ## First time on a Mac
 
@@ -83,12 +89,14 @@ The full dependency table is in README.md ("Dependencies"). In short:
    (`xcode-select -p` should print `/Library/Developer/CommandLineTools`;
    the scripts unset `DEVELOPER_DIR`).
 2. Rust via rustup, stable (built with 1.100). Network on first build:
-   crates.io, IronRDP from GitHub, SwiftTerm and RoyalVNCKit via SwiftPM.
+   crates.io, IronRDP from GitHub, SwiftTerm, RoyalVNCKit and Sparkle (a
+   prebuilt framework, with its command-line tools in
+   `App/.build/artifacts/sparkle/Sparkle/bin`) via SwiftPM.
 3. Optional: `brew install 1password-cli` (providers), `brew install
    xcodegen` (`make xcode`, needs `sudo xcodebuild -license accept`),
    `cargo install cargo-audit`, `brew install gh`.
 4. `make core` then `make app` → `build/Toolbox.app`. `make test` → Rust
-   tests (72 as of 2026-11-23). `make run` launches the bundle.
+   tests (72 as of 2026-11-24). `make run` launches the bundle.
 5. `make signing` once (asks for the login password): creates and trusts a
    self-signed "Toolbox Local Signing" certificate so the app's signature
    stays stable across builds and the Keychain's "Always Allow" for the
@@ -255,6 +263,24 @@ status line reads.
 Never rebuild (`make app` replaces the bundle) or edit a shell script
 while a run that uses it is going on.
 
+`tools/e2e/update-rehearsal.sh` is the check for over-the-air updates. It
+makes a key for the run, two copies of `build/Toolbox.app` that claim to be
+9.9.1 and 9.9.2 (own bundle identifier, so own preferences; they trust the
+run's key and may read plain HTTP from 127.0.0.1), a feed written by
+`generate_appcast` as in a release, and a web server on 127.0.0.1:8497 for
+as long as it runs. It passes only if the old copy becomes the new one on
+disk after it quits, the updated copy is then offered nothing, and an
+archive and a feed altered after signing are each refused for that reason
+("improperly signed"; for the feed, with no download). Everything stays in
+the background and nothing real is touched: not the update key, not
+GitHub, not the owner's preferences. The app's part: `--updater-feed <url>`
+(honoured only in a run against a store named in the environment; such a
+run looks for updates nowhere otherwise), `--demo-update` (look two
+seconds after launch, the way the daily check does) and
+`--demo-update-window` (what Check for Updates… does; with `--snapshot` it
+gives a picture of the update window). The app logs one `updates:` line
+per step.
+
 Screenshots need Screen Recording permission for the terminal; GUI
 scripting (clicks) is not available without Accessibility permission, so
 UI paths are exercised with launch aids or synthetic `NSEvent`s posted from
@@ -355,6 +381,44 @@ as `Toolbox-*.ips` (JSON: header line, then body with `threads[].frames`).
   is back, so a tab does not keep the name of a host that was left.
   The shell is a login shell (`argv[0]` with a dash) from the account
   record; the environment is the app's without `TOOLBOX_*`.
+- Updates are Sparkle 2 (`Updates.swift`, `bridge/update-config.sh`).
+  What has to stay true:
+  - The app takes an update only if the feed and the archive are both
+    signed with the update key (`SURequireSignedFeed`,
+    `SUVerifyUpdateBeforeExtraction`, `SUPublicEDKey` in the Info.plist
+    that `bundle-app.sh` writes). The private half is in the login
+    keychain of the release Mac, account `toolbox-update-key`; it is never
+    in the repository or in a file a script writes. There is one key for
+    good: a second one would be refused by every copy in use, and a lost
+    one ends updates for all of them. `make release` compares the keychain's
+    public half with the one in `update-config.sh` and stops on a
+    difference.
+  - The feed is `appcast.xml`, a file on every GitHub Release; copies read
+    `releases/latest/download/appcast.xml`. A release published without it
+    stops updates for everyone until the next one, silently, so `make
+    publish` refuses to go on without a feed written for exactly that
+    archive. The address is built into every copy: no renaming of the
+    repository or the account without a build that knows the new address
+    first.
+  - In the bundle the framework is signed from the inside out (Autoupdate,
+    Updater.app, then the framework), never with `--deep`, and its two XPC
+    services are removed (they are for sandboxed apps; the app has none
+    and no entitlements). SwiftPM leaves a search path into `App/.build`
+    in the executable once a binary framework is linked;
+    `bundle-app.sh` deletes it, or the release's check for paths from the
+    build Mac fails.
+  - A run against a test store does not start the updater (it would offer
+    the real release to a test copy).
+  - Things that cost time: Sparkle does not fetch `file://` feeds (hence
+    the web server in the rehearsal), and plain HTTP needs the transport
+    exception that only the rehearsal's copies get. Its "did extract"
+    callback arrives before the signature is checked, so nothing may be
+    logged or concluded there; "will install on quit" is the first point
+    at which the update is verified. `generate_appcast` reads the key from
+    the keychain and macOS asks about it once per Mac and per Sparkle
+    version (Always Allow), which blocks an unattended `make release`
+    until someone answers. `SwiftUI` has a `KeyPress` type too: do not
+    name anything in the app that.
 - iTerm2 as the terminal engine was asked for (2026-11-24, "if that is
   open source and possible") and is not possible here. It is GPL (its
   README says version 3, its LICENSE file is version 2), which the
@@ -564,6 +628,54 @@ kept for the key badge and the spinner when neither shows (names are cut
 38 points early in a narrow sidebar).
 
 ## Current state (update in every commit)
+
+**0.5.0: updates over the air (2026-11-24, on the laptop).** `VERSION` is
+0.5.0 and its release notes are written; the owner asked for the release
+in the same session, and the commit after this one records how it went.
+The owner asked what it would take for "the few users that have it, if any, to
+download this version then get updates over the air", was given the
+answer (Sparkle; one more download by hand, because 0.4.0 has no updater
+in it; one key to keep safe) and said to proceed. Download counts on
+GitHub that day: four per release for the disk images of 0.2.0 to 0.3.1,
+the release checks and the owner's own installs included.
+
+- The app: `Updates.swift` starts Sparkle's standard updater; Toolbox ▸
+  Check for Updates… and Check for Updates Automatically (on by default:
+  the owner's choice was "check daily but ask before installing"). The
+  rules are in the invariants.
+- The build: `bundle-app.sh` puts Sparkle.framework into the bundle, signs
+  its helpers, writes the feed address and the public key into the
+  Info.plist and removes SwiftPM's search path from the executable.
+- Releases: `make release` signs the zip and writes
+  `build/release/appcast.xml` with `generate_appcast`, then checks the
+  archive's signature against the key in the built app with a few lines
+  of CryptoKit; `make publish` uploads the feed and refuses to publish
+  without one. `publish.sh` now names the repository itself (`GH_REPO`), so
+  the laptop clone's old remote address no longer matters to it.
+- The update key was made on the laptop that day with `generate_keys
+  --account toolbox-update-key` and is in that Mac's login keychain only.
+  **The desktop Mac cannot make a release until the key is brought over**
+  (README, "Sharing builds with the team", step 3), and the owner was
+  asked to keep a copy in their password manager.
+
+Verified: `tools/e2e/update-rehearsal.sh` passes all four checks against a
+debug build and against the release build (Developer ID, hardened
+runtime): the old copy replaces itself and the result's signature
+verifies, the updated copy is offered nothing, and an archive and a feed
+altered after signing are refused as improperly signed, the feed without a
+download. The update window was looked at in a `--snapshot` picture with
+the 0.4.0 notes in it (Markdown, bold and bullets as written). A check
+sends the feed's path, `Toolbox/<version> Sparkle/2.10.1` and the language
+setting, recorded on a local server. `NOTARIZE=0 make release` with the
+real key: nothing naming the Mac, hardened runtime and timestamps on all
+five executables, no entitlement anywhere in the bundle, feed written and
+its signature good against the app's key. A run against the fixture does
+not start the updater. `make test`: 72.
+
+Not verified: a real update between two published releases, which can only
+be seen when the release after the first one with the updater goes out;
+the update of a copy in a folder the user cannot write to; Check for
+Updates… as a click.
 
 **Toolbox 0.4.0 (build 19) is published** as GitHub Release `v0.4.0`
 (2026-11-24); the tag is on the commit before this one. It is the first
@@ -837,9 +949,12 @@ the bundle identifier `com.dobbs.Toolbox`; whether to delete the 0.2.0
 release, whose binary contains build paths. A Developer ID signature
 names its holder by design.
 
-Release flow: bump `VERSION`, add `docs/release-notes/<version>.md`,
-commit and push, `make release`, `make publish`, then a commit that
-records the release here. **Then remove `build/`, every time, without
+Release flow: bump `VERSION`, add `docs/release-notes/<version>.md`
+(shown on the release page and in the update window), commit and push,
+`make release` (also signs the update and writes the feed; needs the
+update key on that Mac), `make publish` (uploads the feed with the rest:
+this is the moment installed copies start being offered the version), then
+a commit that records the release here. **Then remove `build/`, every time, without
 asking** (the owner's standing instruction since 2026-11-23: "always
 remove builds after they're pushed to releases"; they install from the
 Releases page). Do the checks that need the local files first: the

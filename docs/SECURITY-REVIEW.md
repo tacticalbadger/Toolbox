@@ -487,3 +487,111 @@ here.
 Tests: 72 Rust tests as before, none new, clippy clean. The app paths
 above were run against the local test servers and read from logs,
 `--snapshot` reports and screenshots.
+
+## Addendum — 2026-11-24, later: updates over the air (0.5.0)
+
+Reviewed: the updater. Sparkle 2.10.1 (MIT), how it is put into the bundle
+and signed, what the app asks GitHub for and when, what has to hold before
+an update is installed, where the update key lives, and the scripts that
+sign and publish an update. The adversaries in mind are someone who
+controls the GitHub repository or account the releases are on, or the
+network between a user and GitHub; and the plain accident of a lost key.
+Method: Sparkle's documentation and headers, a read-through of the change
+set, `tools/e2e/update-rehearsal.sh` (a whole update with a throwaway key
+and a feed served from the same Mac), and a local server that wrote down
+what a check sends.
+
+**What goes out.** At first launch, then once a day while the app runs,
+and on Toolbox ▸ Check for Updates…, the app sends one request for the
+feed, `https://github.com/<owner>/Toolbox/releases/latest/download/appcast.xml`.
+As recorded: the path, `User-Agent: Toolbox/<version> Sparkle/2.10.1`, and
+the Mac's language setting in `Accept-Language`. No query, no identifier,
+no cookie, no system profile (`SUEnableSystemProfiling` is left off).
+GitHub also sees the IP address, as it does for any download. If there is
+a newer version and the user agrees, a second request fetches the zip.
+Toolbox ▸ Check for Updates Automatically stops the daily request.
+
+**What has to hold before anything is installed.** Two signatures, both
+made with the update key, an EdDSA (ed25519) key whose public half is in
+the app's Info.plist (`SUPublicEDKey`) and so under the app's own code
+signature:
+
+- *The feed* (`SURequireSignedFeed`). A feed changed after it was signed
+  is refused whole ("The update feed is improperly signed"): no version in
+  it is offered, its notes and links are not shown, and the archive it
+  names is not downloaded.
+- *The archive*, checked before it is unpacked
+  (`SUVerifyUpdateBeforeExtraction`). An archive with four bytes changed,
+  same name and length, is found and downloaded and then refused ("The
+  update is improperly signed"); nothing is installed.
+
+Both refusals, a good update (the old copy replaced itself, and the result's
+code signature verifies) and an up-to-date copy being offered nothing are
+what the rehearsal checks, and it fails unless each happens for that
+reason.
+
+**What someone who controls the GitHub account can do.** Withhold: delete
+the feed or the release, or put an old feed back (a version that is not
+newer than the running one is not installed). That keeps users on what
+they have; nothing tells them. Replace the disk image on the Releases
+page: that reaches people who download by hand, who are protected by
+Gatekeeper and notarization as before, not by this. What they cannot do
+is make an installed copy install anything, or change the notes and links
+it shows: both need the update key.
+
+**The update key.**
+
+- The private half is in the login keychain of the Mac that makes
+  releases: a generic password for "https://sparkle-project.org", account
+  `toolbox-update-key`, made by Sparkle's `generate_keys`. It is not in the
+  repository and no script writes it anywhere. The scripts do not read it
+  either: `generate_appcast` does (macOS asks once per Mac whether that
+  tool may), and `make release` only asks `generate_keys` for the public
+  half.
+- `make release` refuses to go on when the key in the keychain is not the
+  one the app trusts, and afterwards checks the signature it got against
+  the key inside the built app, independently of Sparkle's tools. `make
+  publish` refuses a release without a feed, or with a feed written for
+  another archive: a release like that would stop updates for everyone
+  without a sign.
+- *Stolen:* it is of use only together with a way to put files where
+  copies look, which is the GitHub account. With both, code can be sent to
+  every installed copy. It deserves the care the Developer ID key gets.
+- *Lost:* no installed copy can be updated again. Because archives are
+  verified before unpacking, the app's Apple signature cannot stand in for
+  a new key. Everyone downloads by hand once more. The owner was told to
+  keep a copy.
+- `TOOLBOX_UPDATE_KEY_FILE` lets a release take the key from a file; such
+  a file is exactly as safe as wherever it is kept.
+
+**In the bundle.** Sparkle.framework and its two helper programs
+(Autoupdate, Updater.app), signed like everything else in the app, each by
+itself and from the inside out as Sparkle's documentation asks. `make
+release` now checks every executable in the bundle for the hardened
+runtime and a secure timestamp. Sparkle's two XPC services exist for
+sandboxed apps; this app is not one, so they are left out, and with them
+the only entitlement Sparkle ships.
+
+- The installer runs as the user and swaps the bundle once the app has
+  quit. Where the user cannot write to the folder the app is in, Sparkle
+  asks macOS for an administrator's authorization; that is its documented
+  behaviour and was not tried here.
+- Release notes come from the signed feed as Markdown. JavaScript in
+  release notes is off, which is Sparkle's default and was left alone.
+
+**Test runs.** An instance started against a store named in the
+environment does not look for updates, so a test copy is never offered the
+real release, and only such an instance honours `--updater-feed`. The
+rehearsal's copies have a bundle identifier of their own (their own
+preferences), trust a key made for that run and, unlike the real app, may
+load plain HTTP from 127.0.0.1.
+
+**The feed's address is in every copy.** If the repository or the account
+is renamed, old copies keep updating only through GitHub's redirect, for
+as long as the old name stays unused. Someone who took the old name could
+not send updates (no key) but could stop them. Ship a build with the new
+address before a rename.
+
+Not verified: a real update between two published releases (it needs the
+release after 0.5.0), and an update of a copy in a folder the user cannot
+write to.

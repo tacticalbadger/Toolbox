@@ -13,6 +13,9 @@ packages:
   RoyalVNCKit:
     url: https://github.com/royalapplications/royalvnc
     revision: 92d4427c73817d8f849bb289ff190aa4b40c44ea
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.1
 
 settings:
   base:
@@ -36,6 +39,7 @@ targets:
     dependencies:
       - package: SwiftTerm
       - package: RoyalVNCKit
+      - package: Sparkle
     info:
       path: Info.plist
       properties:
@@ -49,6 +53,13 @@ targets:
         NSSupportsAutomaticTermination: false
         NSSupportsSuddenTermination: false
         NSHumanReadableCopyright: ""
+        # Over-the-air updates. Keep in step with bridge/update-config.sh,
+        # which is where `make app` and `make release` take these from.
+        SUFeedURL: "https://github.com/tacticalbadger/Toolbox/releases/latest/download/appcast.xml"
+        SUPublicEDKey: "h2Ue9u/hwW6kZp5iTEZ6aZBh5jzWhsn/CZe+laVMknw="
+        SUEnableAutomaticChecks: true
+        SURequireSignedFeed: true
+        SUVerifyUpdateBeforeExtraction: true
         # Shown when macOS asks whether the app may read a protected folder.
         NSDesktopFolderUsageDescription: "Toolbox reads files here when you paste them into a remote desktop, transfer them to a server, or work with them in a local terminal."
         NSDocumentsFolderUsageDescription: "Toolbox reads files here when you paste them into a remote desktop, transfer them to a server, or work with them in a local terminal."
