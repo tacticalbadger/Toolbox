@@ -184,11 +184,35 @@ to Unlock Vault.
   renegotiated at the new pixel size. A session that ends cleanly (RDP
   sign-out, shell logout) closes its pane by itself; one that fails stays so
   the message can be read.
-- Workspaces are tabs (the bar stays visible; "+" or ⌘T adds one) and any mix
-  of sessions can live in any of them. Move a pane to another workspace from
-  its header's context menu or the Pane menu (⌘⇧M for a new workspace); the
-  session keeps running through the move. Double-click a tab (or press ⌘⇧R)
-  to rename the workspace.
+- Every new session opens in a tab of its own: SSH, remote desktop, VNC,
+  file transfer and local terminals alike. The tab goes to the end of the
+  bar and is named after the session; the first session uses the empty
+  workspace that is already there. Tabs are workspaces, so arranging is up
+  to you: split a pane (⌘D, ⌘⇧D) and open a connection into the empty half,
+  drop a connection from the sidebar on a pane's edge, or send a pane to
+  another tab from its header's context menu or the Pane menu (Move Pane to
+  Workspace; ⌘⇧M gives a pane of a shared tab a tab of its own). The
+  session keeps running through the move, and a tab with several sessions
+  is named after them ("web01, db02 + 1"). A tab whose last session is
+  closed, ends or is moved away closes too, unless it is the only tab in
+  its window. The bar stays visible; "+" or ⌘T adds an empty workspace.
+  Double-click a tab (or press ⌘⇧R) to give it a name of your own; an empty
+  name goes back to the automatic one.
+- Each tab has the sidebar beside it. In a new session's tab it starts out
+  as the sidebar the session was opened from: same width, same filter, same
+  folders open, same selection and place in the list, so the next
+  connection is where the last one was.
+- Local terminals: File ▸ New Local Terminal (⌘⇧T) or the toolbar button
+  opens your login shell on this Mac, on the terminal engine, themes and
+  text size of the SSH panes, with 10,000 lines of scrollback. The tab
+  shows the folder you are in and the program that is running, read from
+  the system, so no shell integration is needed; a program that sets a
+  title of its own gets it, until you are back at the shell. A shell that
+  exits closes its tab; closing an idle shell asks nothing, one with a
+  program in the foreground names it first. Programs in the terminal can
+  put text on the clipboard but cannot read it.
+- ⌘F searches the text and scrollback of a terminal, SSH or local (⌘G and
+  ⌘⇧G for the next and previous match, ⌘E to search for the selection).
 - A sidebar tree like Royal TS: folders you create (nest them with `/`),
   providers as folders in place with what they generate underneath (an
   Active Directory provider shows its OU hierarchy), drag and drop between
@@ -278,8 +302,15 @@ cargo run --example ftp_server --features test-support -- --port 2121 [--tls]   
 
 Launch overrides for a throwaway setup: `TOOLBOX_STORE_PATH`,
 `TOOLBOX_VAULT_PATH`, `TOOLBOX_KNOWN_HOSTS`, `--connect <id>` to open a
-connection on start, `--files <id>` to open its SFTP browser (both may repeat, each
-opening another pane), `--expand-all` to expand the whole sidebar tree, `--demo-move` to move the
+connection on start, `--files <id>` to open its SFTP browser and `--local-terminal` to open a terminal
+on this Mac (all three may repeat, each opening another tab), `--demo-type <text>` to type a line into the
+first local terminal (`--demo-type-after <secs>` says when; only in a run against a store named in the
+environment), `--demo-merge` to bring every tab's sessions into the first one as panes,
+`--demo-select-tab <n>` to show that tab for three seconds and then the last one again,
+`--demo-key <letter>` to press ⌘ and that letter the way the keyboard would (a capital adds ⇧; may repeat),
+`--demo-filter-paste <id>` to press ⌘V in the sidebar's filter before and after that connection is opened
+and log where it went (the app has to be frontmost; the clipboard is put back),
+`--expand-all` to expand the whole sidebar tree, `--demo-move` to move the
 focused pane into a new workspace after launch, `--demo-close` to close the focused pane after launch,
 `--demo-split` to split it (which resizes what is in it),
 `--demo-provider-rename <id> <name>` and `--demo-folder-rename <path> <new path>` to rename a provider or a

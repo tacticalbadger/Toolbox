@@ -96,6 +96,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 Snapshot.write(to: directory)
             }
         }
+        // Testing aids: `--local-terminal` opens a terminal on this Mac the
+        // way File ▸ New Local Terminal does (repeatable), and
+        // `--demo-type <text>` types that line into the first one two
+        // seconds later (`--demo-type-after <secs>` for another moment).
+        // Typing is for runs against a store named in the environment
+        // only: a launch argument must not be a way to run commands in the
+        // owner's everyday app.
+        for _ in args.filter({ $0 == "--local-terminal" }) {
+            controller.openLocalTerminal()
+        }
+        if let index = args.firstIndex(of: "--demo-type"), index + 1 < args.count {
+            let line = args[index + 1]
+            let delay = args.firstIndex(of: "--demo-type-after").flatMap { $0 + 1 < args.count ? Double(args[$0 + 1]) : nil } ?? 2
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard !AppModel.shared.usesDefaultStore else {
+                    NSLog("--demo-type: ignored, this is not a run against a test store")
+                    return
+                }
+                let terminals = self.controllers.flatMap { $0.paneVC.contents }.compactMap { $0 as? LocalTerminalView }
+                guard let terminal = terminals.first else {
+                    NSLog("--demo-type: no local terminal is open")
+                    return
+                }
+                terminal.type(line + "\r")
+            }
+        }
+        // Testing aid: `--demo-key <letter>` (repeatable) presses ⌘ and
+        // that letter with the keyboard wherever it is, the first after
+        // 3 s and each further one 2 s later; a capital adds ⇧. `T` is
+        // File ▸ New Local Terminal, `f` Edit ▸ Find. Behind another app
+        // there is no key window to press anything in: then the menu item
+        // with that shortcut is carried out by hand in the newest
+        // workspace (see ShortcutPress), and the log says which it was.
+        let keys = args.indices.filter { args[$0] == "--demo-key" && $0 + 1 < args.count }.compactMap { args[$0 + 1].first }
+        for (position, key) in keys.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3 + Double(position) * 2) {
+                if ShortcutPress.command(key) {
+                    NSLog("--demo-key \(key): pressed in the key window")
+                } else if let window = self.controllers.last?.window {
+                    NSLog("--demo-key \(key): not in front, menu item by hand: \(ShortcutPress.performMenuItem(for: key, in: window))")
+                } else {
+                    NSLog("--demo-key \(key): no window")
+                }
+            }
+        }
+        // Testing aid: show the nth workspace tab (from 1) after 3 s and
+        // the last one again after 6 s, to see what a session shows after
+        // its tab was out of sight.
+        if let index = args.firstIndex(of: "--demo-select-tab"), index + 1 < args.count, let number = Int(args[index + 1]) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                guard self.controllers.indices.contains(number - 1) else {
+                    NSLog("--demo-select-tab: there is no tab \(number)")
+                    return
+                }
+                let away = self.controllers[number - 1].window, back = self.controllers.last?.window
+                away?.tabGroup?.selectedWindow = away
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    back?.tabGroup?.selectedWindow = back
+                }
+            }
+        }
+        // Testing aid: bring every other workspace's sessions into the
+        // first one, the way Move Pane to Workspace does, after 3 s.
+        if args.contains("--demo-merge") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                for other in self.controllers where other !== controller {
+                    while other.paneVC.focusedPane.content != nil {
+                        other.movePane(other.paneVC.focusedPane, to: controller)
+                    }
+                }
+            }
+        }
+        // Testing aid: ⌘V into the sidebar's filter, before and after that
+        // connection is opened (see FilterPasteCheck).
+        if let index = args.firstIndex(of: "--demo-filter-paste"), index + 1 < args.count {
+            let wanted = args[index + 1]
+            if let connection = AppModel.shared.connections.first(where: { $0.id == wanted || $0.name == wanted }) {
+                FilterPasteCheck.run(in: controller, connection: connection)
+            } else {
+                NSLog("--demo-filter-paste: no connection named \(wanted)")
+            }
+        }
         // Testing aid: split the focused pane shortly after launch, which
         // resizes what is in it.
         if args.contains("--demo-split") {
@@ -215,7 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let live = controllers.reduce(0) { $0 + $1.paneVC.liveSessionCount }
+        let live = controllers.reduce(0) { $0 + $1.paneVC.sessionsToWarnAbout }
         if live > 0,
            !Prompts.confirm(title: "Quit Toolbox?",
                             message: "\(live) active session\(live == 1 ? "" : "s") will be disconnected.",
@@ -232,18 +314,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         newWorkspaceWindow(asTab: true)
     }
 
+    /// File ▸ New Local Terminal ends up here when no workspace window is
+    /// open to take it.
+    @objc func newLocalTerminal(_ sender: Any?) {
+        newWorkspaceWindow(asTab: false).openLocalTerminal()
+    }
+
     /// AppKit sends this when the "+" button in the native tab bar is clicked.
     @objc func newWindowForTab(_ sender: Any?) {
         newWorkspaceWindow(asTab: true)
     }
 
+    /// A new workspace. As a tab it goes right after `sibling`'s tab, or
+    /// after the key window's when no sibling is named.
     @discardableResult
-    func newWorkspaceWindow(asTab: Bool) -> WorkspaceWindowController {
+    func newWorkspaceWindow(asTab: Bool, beside sibling: NSWindow? = nil) -> WorkspaceWindowController {
         WorkspaceWindowController.counter += 1
         let controller = WorkspaceWindowController(name: "Workspace \(WorkspaceWindowController.counter)")
         controllers.append(controller)
         if asTab,
-           let key = NSApp.keyWindow ?? NSApp.mainWindow,
+           let key = sibling ?? NSApp.keyWindow ?? NSApp.mainWindow,
            let window = controller.window,
            key.tabbingIdentifier == window.tabbingIdentifier {
             key.addTabbedWindow(window, ordered: .above)

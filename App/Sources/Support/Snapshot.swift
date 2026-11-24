@@ -16,6 +16,30 @@ enum Snapshot {
             NSLog("snapshot: \(line)")
             report.append(line)
         }
+        // Every workspace tab with what is in it, whichever one is showing.
+        // For a local terminal that includes the last lines on its screen,
+        // which is how a run without a screenshot can tell that the shell
+        // answered; like the pictures below, not something to produce from
+        // the owner's own sessions.
+        let workspaces = (NSApp.delegate as? AppDelegate)?.workspaces ?? []
+        for (index, workspace) in workspaces.enumerated() {
+            let window = workspace.window
+            let sessions = workspace.paneVC.contents.map { "\(type(of: $0)):\($0.tabTitle)\($0.isLive ? "" : " (not live)")" }
+            note("workspace-\(index + 1) title=\(window?.title ?? "") panes=\(workspace.paneVC.paneCount) "
+                + "sessions=[\(sessions.joined(separator: " | "))] "
+                + "tabs=\(window?.tabbedWindows?.count ?? 1) selected=\(window?.tabGroup?.selectedWindow === window) "
+                + "onScreen=\(window?.occlusionState.contains(.visible) == true) "
+                + "filter=\(workspace.sidebar.filterText)")
+            for case let files as SftpPaneView in workspace.paneVC.contents {
+                note("  files connected=\(files.model.isConnected) status=\(files.model.status ?? "")")
+            }
+            for case let terminal as LocalTerminalView in workspace.paneVC.contents {
+                note("  terminal \(terminal.snapshotDescription)")
+                let lines = terminal.screenText.split(separator: "\n", omittingEmptySubsequences: true)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                for line in lines.suffix(12) { note("  | \(line)") }
+            }
+        }
         for (index, window) in NSApp.windows.enumerated() where window.isVisible {
             guard let view = window.contentView?.superview ?? window.contentView,
                   let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }

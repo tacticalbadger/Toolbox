@@ -96,7 +96,7 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/Mac
 cp "$ROOT/App/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 # Shown when macOS asks whether the app may read a protected folder.
-FILES_PURPOSE="Toolbox reads files here only when you paste them into a remote desktop or transfer them to a server."
+FILES_PURPOSE="Toolbox reads files here when you paste them into a remote desktop, transfer them to a server, or work with them in a local terminal."
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

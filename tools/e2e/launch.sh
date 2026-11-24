@@ -3,7 +3,10 @@
 # skipped for the run and a separate Keychain item for the vault key:
 #   tools/e2e/launch.sh [--fixture dir] [app args…]
 #   tools/e2e/launch.sh --connect echo --connect echo-1p
-# App args: --connect <id>, --files <id> (repeatable), --expand-all,
+# App args: --connect <id>, --files <id>, --local-terminal (repeatable,
+# each session in a tab of its own), --demo-type <text>
+# [--demo-type-after <secs>], --demo-merge, --demo-select-tab <n>,
+# --demo-key <letter>, --demo-filter-paste <id>, --expand-all,
 # --demo-move, --demo-close, --demo-split, --edit-connection <id|new>,
 # --edit-provider <id|new>, --demo-provider-rename <id> <name>,
 # --demo-folder-rename <path> <new path>,

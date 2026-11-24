@@ -25,6 +25,9 @@ enum MainMenu {
         // File
         let file = NSMenu(title: "File")
         file.addItem(withTitle: "New Workspace", action: #selector(AppDelegate.newWorkspace(_:)), keyEquivalent: "t")
+        let localTerminal = file.addItem(withTitle: "New Local Terminal",
+                                         action: #selector(WorkspaceWindowController.newLocalTerminal(_:)), keyEquivalent: "t")
+        localTerminal.keyEquivalentModifierMask = [.command, .shift]
         file.addItem(withTitle: "New Connection…", action: #selector(WorkspaceWindowController.newConnection(_:)), keyEquivalent: "n")
         let newCredential = file.addItem(withTitle: "New Credential…", action: #selector(WorkspaceWindowController.newCredential(_:)), keyEquivalent: "n")
         newCredential.keyEquivalentModifierMask = [.command, .shift]
@@ -50,6 +53,22 @@ enum MainMenu {
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(.separator())
+        // Searching a terminal's text and scrollback: SwiftTerm's own find
+        // bar, driven by the standard find actions and their tags.
+        let find = NSMenu(title: "Find")
+        let finds: [(String, String, NSEvent.ModifierFlags, NSFindPanelAction)] = [
+            ("Find…", "f", [.command], .showFindPanel),
+            ("Find Next", "g", [.command], .next),
+            ("Find Previous", "g", [.command, .shift], .previous),
+            ("Use Selection for Find", "e", [.command], .setFindString),
+        ]
+        for (title, key, modifiers, action) in finds {
+            let item = find.addItem(withTitle: title, action: #selector(NSTextView.performFindPanelAction(_:)), keyEquivalent: key)
+            item.keyEquivalentModifierMask = modifiers
+            item.tag = Int(action.rawValue)
+        }
+        edit.addItem(submenu: find)
         main.addItem(submenu: edit)
 
         // View

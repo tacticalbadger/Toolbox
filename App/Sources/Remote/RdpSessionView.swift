@@ -640,9 +640,13 @@ final class RdpSessionView: NSView, PaneContent {
     }
 
     /// Keeps ⌘-shortcuts for the remote session rather than the local menu,
-    /// except the ones that manage panes and workspaces.
+    /// except the ones that manage panes and workspaces. Only while this
+    /// pane has the keyboard: AppKit offers a key equivalent to every view
+    /// in the key window, first responder or not, before the menu sees it,
+    /// so without that check a live desktop took ⌘V, ⌘C, ⌘A and the rest
+    /// away from the sidebar's filter and every other field in its window.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard isLive, event.modifierFlags.contains(.command) else { return false }
+        guard isLive, window?.firstResponder === self, event.modifierFlags.contains(.command) else { return false }
         let reserved: Set<String> = ["t", "w", "n", "d", "q", "r", "[", "]", ",", "h", "m"]
         if let chars = event.charactersIgnoringModifiers?.lowercased(), reserved.contains(chars) {
             return false

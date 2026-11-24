@@ -366,3 +366,124 @@ switches them off.
   following the name, a store from an older version,
   the folder credential on delete, and refreshes that end after a rename
   or a delete.
+
+## Addendum — 2026-11-24: shortcuts beside a remote desktop, sessions in tabs, local terminals (0.4.0)
+
+Reviewed: the fix for keyboard shortcuts in a window that holds a live
+remote desktop, the change that gives every session a tab of its own, and
+the new local terminal pane. Nothing in the core that ships changed: no
+protocol, vault or store code. (The SSH test server, built only with the
+`test-support` feature, was mixing up connections that opened at the same
+moment and no longer does.) Method: a read-through of the change set and of the
+parts of SwiftTerm the local terminal relies on (its local-process view,
+its clipboard hooks, its check of links), and runs against the local test
+servers with the launch aids named below.
+
+**Shortcuts pressed elsewhere in the window went to the remote desktop
+(found, fixed).**
+
+- Up to 0.3.1 a live RDP pane took every ⌘ shortcut pressed anywhere in
+  its window, except the ones that manage panes and workspaces. AppKit
+  offers a key equivalent to every view in the key window before the menu
+  sees it, and the pane did not check that it had the keyboard.
+- On the Mac: ⌘V, ⌘C, ⌘X, ⌘A and ⌘Z did nothing in the sidebar's filter
+  while a remote desktop was live in the same window. This is what the
+  owner reported as "I can only paste into the filter once": once, before
+  the session.
+- On the host: each of those shortcuts arrived as a press of its letter,
+  with no modifier (the ⌘ key itself had gone to the field on the Mac) and
+  no release, typed into whatever had the keyboard there. No clipboard
+  content went with it. The clipboard is announced only while the pane has
+  the keyboard, and that rule was not affected.
+- Fixed: the pane takes a shortcut only while it is the first responder.
+  SwiftTerm's and RoyalVNCKit's views already checked.
+- `--demo-filter-paste <connection>` presses ⌘V the way the keyboard
+  would, with the keyboard in the filter before and after the session
+  opens and then in the session's pane, and logs where it went; the RDP
+  test server counts the keys it receives. Before the fix the second paste
+  never reached the field and the server counted a key. After it both
+  pastes land, the server counts nothing until the pane has the keyboard,
+  and then counts the one key that is the session's. With an SSH session
+  the pastes landed before and after.
+
+**Local terminals.** File ▸ New Local Terminal runs a shell on the Mac,
+which the app could not do before.
+
+- *What runs.* The login shell named in the user's account record
+  (`/bin/zsh` when that is not an executable file), as a login shell, in
+  the home folder, as the user. Nothing is elevated. The app is not
+  sandboxed, so the shell can do what a shell in Terminal can.
+- *What cannot start one.* Only the menu item, its shortcut and the
+  toolbar button. There is no connection kind for it, so nothing in a
+  store document names a program to run and a provider cannot generate
+  one. Keep it that way unless stored commands get a review of their own:
+  they would turn the store, and whatever a provider syncs into it, into
+  something that executes. The testing aid that types into a terminal
+  (`--demo-type`) is ignored unless the run names its own store in the
+  environment.
+- *Environment.* The app's own, without the `TOOLBOX_*` overrides of a
+  test run, plus `TERM`, `COLORTERM`, `TERM_PROGRAM` and a UTF-8 `LANG`
+  when no locale is set. The app never puts a secret into its environment
+  (the vault key stays in the Keychain; secrets from the vault or
+  1Password are handed to the core in memory at connect time), so the
+  shell inherits none.
+- *Reading the clipboard is refused.* SwiftTerm's local-process view
+  answers a clipboard query (OSC 52 with `?`) with the clipboard's text.
+  Left as it comes, anything that can print to the terminal could ask: a
+  file shown with `cat`, a host at the other end of `ssh`. Toolbox puts a
+  delegate in front of the view that refuses the query, as the SSH panes
+  always have. Writing to the clipboard (OSC 52 with data) stays allowed,
+  as in SSH panes; the residual risk is the same one, that output can
+  replace what you are about to paste somewhere else. The newer clipboard
+  protocol (OSC 5522) is answered as unsupported.
+- *Links.* A click on a link in terminal output goes through SwiftTerm's
+  check: web and mail links open; a local file or folder opens only if it
+  exists and cannot run code; any other scheme asks first and shows the
+  target; text with invisible characters is refused.
+- *Closing.* Closing the pane hangs up the shell (SIGHUP, which a shell
+  passes on to its jobs), then SIGTERM; SwiftTerm kills what is left when
+  the pane is released. A program in the foreground is named in a question
+  first. An idle shell closes without one, and background jobs end with it
+  unasked, as they do when a Terminal window closes.
+- *What stays behind.* Scrollback (10,000 lines) lives in memory and goes
+  with the pane. Nothing is written to disk; SwiftTerm's host logging is
+  not switched on.
+- *Privacy prompts.* A program started in the terminal is Toolbox as far
+  as macOS privacy is concerned. The first `ls ~/Documents` asks whether
+  Toolbox may read Documents, and the purpose text now says that a local
+  terminal is one of the reasons. The answer covers the whole app, which
+  could already read those folders when asked to (file transfer, files
+  pasted into a remote desktop).
+- *Find.* ⌘F searches inside the process. ⌘E (Use Selection for Find)
+  puts the selection on the system's find pasteboard, which other apps
+  read, as it does in every Mac app.
+
+**Sessions in tabs.**
+
+- More windows, each with a sidebar; no new data flows. A new tab's
+  sidebar starts with the filter, open folders, selection and scroll
+  position of the one the session was opened from: the same information,
+  in the same process.
+- A tab is named after its sessions: connection names, and for a local
+  terminal the folder it is in and the program in the foreground. Window
+  titles show in the Window menu, in Mission Control and to anything
+  allowed to list windows. Tabs used to be called "Workspace 1" unless
+  renamed, with the names only in pane headers. Worth knowing when sharing
+  a screen; renaming a tab replaces the automatic name.
+- The clipboard rule for remote desktops is unchanged. With one session
+  per tab, a desktop in another tab is in a window that is not the key
+  window and is told nothing.
+- A tab closes by itself only when no session is left in it. A session
+  that failed keeps its pane, its message and its tab.
+
+Not verified: a notarized release build of this change set (the checks ran
+on debug builds, and on a copy signed ad hoc with the hardened runtime for
+the local terminal alone). In a release build programs in the terminal
+should be unable to script other apps or use the camera or microphone,
+because the hardened runtime wants entitlements for those and the release
+has none; that is what other terminal apps ran into, and it was not tried
+here.
+
+Tests: 72 Rust tests as before, none new, clippy clean. The app paths
+above were run against the local test servers and read from logs,
+`--snapshot` reports and screenshots.

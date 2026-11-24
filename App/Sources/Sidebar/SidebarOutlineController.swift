@@ -346,7 +346,11 @@ final class SidebarOutlineController: NSViewController, NSOutlineViewDataSource,
             model.$folders.map { _ in () }.eraseToAnyPublisher(),
             sync.$inProgress.map { _ in () }.eraseToAnyPublisher()
         )
-        .receive(on: DispatchQueue.main)
+        // One rebuild for a burst: a store change publishes each of its
+        // lists in turn, and every workspace tab has a sidebar listening.
+        // (The wait also lets the lists take their new values, which they
+        // are about to when they publish.)
+        .debounce(for: .milliseconds(10), scheduler: DispatchQueue.main)
         .sink { [weak self] in self?.rebuild() }
         .store(in: &cancellables)
         model.folderMoved
@@ -726,6 +730,79 @@ final class SidebarOutlineController: NSViewController, NSOutlineViewDataSource,
     func controlTextDidChange(_ obj: Notification) {
         filter = search.stringValue
         rebuild()
+    }
+
+    // MARK: Filter field
+
+    /// Puts the keyboard in the filter field, its text selected.
+    func focusFilter() {
+        view.window?.makeFirstResponder(search)
+    }
+
+    /// What the filter field holds.
+    var filterText: String { search.stringValue }
+
+    // MARK: Handing the view on
+
+    /// What a sidebar is showing. Every workspace tab has a sidebar of its
+    /// own; a session that opens in a new tab takes this along, so the tree
+    /// beside it is the one the session was picked from and the next
+    /// connection is where the last one was.
+    struct ViewState {
+        var filter: String
+        var expanded: Set<String>
+        var selected: Set<String>
+        var scrollOrigin: NSPoint
+    }
+
+    var viewState: ViewState {
+        var expanded = Set<String>()
+        for row in 0..<outline.numberOfRows {
+            if let node = outline.item(atRow: row) as? SidebarNode, outline.isItemExpanded(node) {
+                expanded.insert(node.id)
+            }
+        }
+        return ViewState(filter: search.stringValue,
+                         expanded: expanded,
+                         selected: Set(selectedNodes.map(\.id)),
+                         scrollOrigin: outline.enclosingScrollView?.contentView.bounds.origin ?? .zero)
+    }
+
+    func adopt(_ state: ViewState) {
+        loadViewIfNeeded()
+        if search.stringValue != state.filter {
+            search.stringValue = state.filter
+            filter = state.filter
+            rebuild()
+        }
+        // While a filter is set every folder is open (`rebuild` sees to
+        // that each time), so there is nothing to copy. Otherwise go down
+        // the list: a row exists only while everything above it is open,
+        // and what gets opened here is looked at further on.
+        var row = 0
+        while filter.isEmpty, row < outline.numberOfRows {
+            if let node = outline.item(atRow: row) as? SidebarNode, node.isContainer {
+                let open = state.expanded.contains(node.id)
+                if open != outline.isItemExpanded(node) {
+                    if open { outline.expandItem(node) } else { outline.collapseItem(node) }
+                }
+            }
+            row += 1
+        }
+        var rows = IndexSet()
+        for row in 0..<outline.numberOfRows {
+            if let node = outline.item(atRow: row) as? SidebarNode, state.selected.contains(node.id) {
+                rows.insert(row)
+            }
+        }
+        outline.selectRowIndexes(rows, byExtendingSelection: false)
+        // The place in the list. The outline only takes the height of its
+        // new rows when it is tiled, and a scroll past its old end before
+        // that would be cut short.
+        view.layoutSubtreeIfNeeded()
+        outline.tile()
+        outline.scroll(state.scrollOrigin)
+        outline.enclosingScrollView.map { $0.reflectScrolledClipView($0.contentView) }
     }
 }
 

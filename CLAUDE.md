@@ -9,8 +9,9 @@ before committing, so the commit describes itself).
 
 Toolbox is a macOS native replacement for Termius + Royal TSX for the owner
 (uses Termius, Royal TSX and 1Password daily; prefers Rust).
-SSH terminals in tabbed workspaces with split panes, RDP and VNC with
-dynamic resolution, connection objects in a Royal-style folder tree, a
+SSH terminals and local shells, RDP and VNC with dynamic resolution, file
+transfer; every session in a workspace tab of its own, with split panes for
+putting sessions side by side; connection objects in a Royal-style folder tree, a
 credential vault with Touch ID, SSH key identities, and dynamic folders fed
 by 1Password (`op` CLI) and Active Directory. Royal TS reference material
 the owner provided is in `docs/royalts-reference/`. The owner's Royal layout to
@@ -54,12 +55,15 @@ directly and do not create feature branches unless they ask. The old
   H.264 test stream; `tools/make-h264-fixture.swift` regenerates it.
 - `App/` — SwiftPM package. AppKit shell: `App/` (delegate, menu),
   `Workspace/` (window = workspace tab, `PaneContainerViewController`,
-  `PaneView`, `PaneLayout`), `Terminal/` (SwiftTerm), `Remote/` (RDP via
+  `PaneView`, `PaneLayout`), `Terminal/` (SwiftTerm: `TerminalSessionView`
+  for SSH, `LocalTerminalView` for a shell on this Mac), `Remote/` (RDP via
   IOSurface layer plus clipboard sharing, VNC via RoyalVNCKit), `Files/`
   (SFTP browser, SwiftUI), `Sidebar/` (NSOutlineView tree, SwiftUI editors,
   `CredentialPicker.swift` with the search popover), `Model/` (AppModel,
   VaultManager, CredentialResolver, ProviderSync), `Support/`
-  (`Snapshot.swift`: the `--snapshot` aid). `Sources/Generated/` and
+  (`Snapshot.swift`: the `--snapshot` aid; `FilterPasteCheck.swift`: the
+  `--demo-filter-paste` aid; `ShortcutPress.swift`: a ⌘ shortcut sent the
+  way the keyboard sends it). `Sources/Generated/` and
   `Vendor/` are produced by `make core` and gitignored.
 - `bridge/` — build scripts: `build-core.sh`, `bundle-app.sh`,
   `signing-identity.sh`, `release.sh` (`make release`), `publish.sh`
@@ -175,7 +179,17 @@ uses an existing credential for domain controllers and none for others. The fixt
 (`TOOLBOX_KEYCHAIN_SERVICE`); delete it afterwards with
 `security delete-generic-password -s com.dobbs.Toolbox.vault-key.e2e`.
 
-Launch args: `--connect <id>` / `--files <id>` (repeatable), `--expand-all`,
+Launch args: `--connect <id>` / `--files <id>` / `--local-terminal`
+(repeatable; the first session takes the empty workspace, every further
+one a tab of its own), `--demo-type <text>` with `--demo-type-after <secs>`
+(default 2; types a line into the first local terminal, and only in a run
+whose store is named in the environment), `--demo-merge` (after 3 s every
+other tab's sessions move into the first workspace as panes),
+`--demo-select-tab <n>` (shows that tab after 3 s and the last one again
+after 6 s), `--demo-key <letter>` (repeatable: presses ⌘ and that letter
+with the keyboard wherever it is, the first after 3 s, each further one
+2 s later; a capital adds ⇧, so `T` is New Local Terminal and `f` Find),
+`--demo-filter-paste <id>` (see below), `--expand-all`,
 `--demo-move` (focused pane → new workspace), `--demo-close` (close the
 focused pane after 3 s), `--demo-split` (split it after 3 s, which resizes
 an RDP desktop), `--edit-connection <id|new>`,
@@ -195,6 +209,52 @@ open with that search typed), `-rdpFastGraphics NO`,
 `-rdpRetinaResolution NO`, `-rdpShareClipboard NO`. Env: `TOOLBOX_STORE_PATH`, `TOOLBOX_VAULT_PATH`,
 `TOOLBOX_KNOWN_HOSTS`, `TOOLBOX_KEYCHAIN_SERVICE`.
 
+`--demo-filter-paste <id>` is the check for keyboard shortcuts and for
+what a new tab inherits. It presses ⌘V through `NSApp.sendEvent` with the
+keyboard in the sidebar's filter (before that connection is opened, and
+again with it open), then with the keyboard in the session's pane, then
+opens a local terminal and compares the new tab's sidebar with the first
+(filter, open folders, selection, scroll position, width). One log line
+per step, `filter-paste: …`. The paste steps need the app frontmost (they
+log `active=` and `key=`); the clipboard is saved and put back inside the
+same call. For `rdp-local` the server's `keys=` count in
+`build/e2e/rdp_server.log` goes up by exactly one per run, in the step
+where the pane has the keyboard.
+
+The `snapshot.txt` report starts with one line per workspace tab (title,
+panes, sessions, whether it is the selected tab and on screen, its
+sidebar's filter) and, for a local terminal, what it says about itself and
+the last lines of its screen. Terminal panes draw with Metal, so they are
+black in `--snapshot` pictures; they are also black in a real screenshot
+of a window that is not on screen, because nothing is drawn then. To see a
+terminal, the instance has to be in front (`open` without `-g`) and the
+screenshot a real one (`screencapture -l <window id>`, ids from
+`tools/e2e/winpid.swift`). For everything else start the instance with
+`open -g -n …`: it stays behind whatever the owner is working in. The app
+used to come to the front at every run, in the middle of their typing.
+
+Coming to the front is not guaranteed: macOS hands the keyboard to a
+newly started app only when the app that started it is in front, so a run
+launched from the editor's terminal stays behind as soon as the owner
+works in something else. `--demo-filter-paste` says so (`active=false
+key=false`), and its paste steps then mean nothing and are repeated later.
+`--demo-key` falls back to the main window and says so: the menu still
+finds its item and the action still travels that window's responder chain
+(enough for ⌘⇧T or ⌘F), but the window's views are not offered the key
+first. A made-up key event has to report ⇧ the way the keyboard does:
+`charactersIgnoringModifiers` keeps the capital, and the menu tells ⌘⇧T
+from ⌘T by it (`ShortcutPress`).
+
+Two `--connect rdp-local` in one run: the test server serves one session
+at a time, the earlier one ends cleanly when the next connects, and its
+tab closes. That is the server, not the app. The SSH server takes any
+number at once (since 2026-11-24, see the invariants), and the
+`snapshot.txt` line of a file pane says whether it connected and what its
+status line reads.
+
+Never rebuild (`make app` replaces the bundle) or edit a shell script
+while a run that uses it is going on.
+
 Screenshots need Screen Recording permission for the terminal; GUI
 scripting (clicks) is not available without Accessibility permission, so
 UI paths are exercised with launch aids or synthetic `NSEvent`s posted from
@@ -204,8 +264,9 @@ as `Toolbox-*.ips` (JSON: header line, then body with `threads[].frames`).
 ## Conventions
 
 - Commit only when the owner asks, on `main`. Commit messages end with the
-  co-author line the session's Claude Code harness specifies (currently
-  `Co-Authored-By: Claude <noreply@anthropic.com>`); PR bodies with
+  co-author line the session's Claude Code harness specifies (on
+  2026-11-24: `Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>`);
+  PR bodies with
   `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 - Before committing: scan the diff for keys/tokens, make sure no temporary
   probe code is left, run `make test`, and update **Current state** below.
@@ -237,6 +298,70 @@ as `Toolbox-*.ips` (JSON: header line, then body with `threads[].frames`).
 - `PaneSplitView` must not be its own `NSSplitViewDelegate` (AppKit's
   sidebar category recurses in `respondsToSelector:`); a separate
   `ResizeObserver` is the delegate.
+- AppKit offers a key equivalent to every view in the key window, first
+  responder or not, before the menu sees it. A view that overrides
+  `performKeyEquivalent` must check `window?.firstResponder === self`
+  before taking anything. `RdpSessionView` did not until 2026-11-24: with
+  a live desktop in the window, ⌘V/⌘C/⌘X/⌘A/⌘Z never reached the
+  sidebar's filter and the host got the letter instead (the owner's "I can
+  only paste into the filter once"). SwiftTerm and RoyalVNCKit check.
+- Where a session goes is decided in one place,
+  `WorkspaceWindowController.placeForNewSession()`: an empty pane of the
+  workspace (the focused one first), otherwise a new workspace tab at the
+  end of the tab bar. `open`, `openFiles` and `openLocalTerminal` all go
+  through it when no pane is named; a drop on a pane and a move from
+  another workspace name theirs (`paneForAdoptedSession` still splits).
+  The owner asked for this on 2026-11-24: sessions open in tabs, arranging
+  them is the user's business. Do not bring back automatic splits.
+- A tab's title is the user's name for it (`customName`, set by Rename,
+  cleared by an empty name), else its sessions' `tabTitle`s, else
+  "Workspace N". `PaneContent.tabTitle` defaults to `title`; the SSH pane
+  keeps to the connection's name because remote shells change the title
+  with every prompt. Titles are refreshed from `onContentChange` and
+  `onLayoutChange`.
+- A workspace whose last pane is closed or lifted is told through
+  `paneVC.onEmptied` and closes its tab on the next turn of the run loop,
+  unless it is the only tab of its window. Everything that takes a pane
+  out goes through `PaneContainerViewController.remove` (which keeps the
+  focus rule below); `closePane` and `lift` report the emptiness. Empty
+  panes the user split off keep a tab alive.
+- Every workspace tab has a sidebar of its own. A new session's tab takes
+  over the look of the one it was opened from
+  (`matchSidebar(of:)`, `SidebarOutlineController.ViewState`: width,
+  filter, open folders, selection, scroll position). While a filter is set
+  every folder is open and `adopt` copies none; the outline must be tiled
+  before it is scrolled or the scroll is cut short. Sidebars rebuild once
+  per burst of model changes (10 ms debounce): `@Published` fires before
+  the value changes, so the wait is also what lets the rebuild see the new
+  lists, and with a dozen tabs the four lists of one store change used to
+  mean four rebuilds in every one of them. `folderMoved` still rebuilds at
+  once. Measured with 2,400 connections and 12 tabs: 6 ms a rebuild, 90 ms
+  to open a tab.
+- Local terminals are SwiftTerm's `LocalProcessTerminalView` (pseudo-
+  terminal, output parsed on its I/O thread). Four things about it:
+  it is its own terminal delegate and answers OSC 52 clipboard queries
+  with the clipboard, so `LocalTerminalPolicy` sits in front as
+  `terminalDelegate`, refuses that and forwards the rest (the property is
+  weak; the pane holds the policy; do not remove it). Its `terminate()`
+  sends SIGTERM, which an interactive shell ignores, so the pane sends
+  SIGHUP first. The shell starts at the first layout (or after 0.5 s), so
+  it knows its size before the first prompt. And the folder and the
+  foreground program in the title come from the system, not from the
+  shell: `tcgetpgrp` on the pseudo-terminal's descriptor, then
+  `proc_pidinfo`, asked again after output (at most every 0.3 s). OSC 7 is
+  ignored on purpose: a host reached with `ssh` sends its own paths.
+  A title a program sets (OSC 0/2) replaces the composed one; if the shell
+  was not in the foreground when it was set, it is dropped once the shell
+  is back, so a tab does not keep the name of a host that was left.
+  The shell is a login shell (`argv[0]` with a dash) from the account
+  record; the environment is the app's without `TOOLBOX_*`.
+- iTerm2 as the terminal engine was asked for (2026-11-24, "if that is
+  open source and possible") and is not possible here. It is GPL (its
+  README says version 3, its LICENSE file is version 2), which the
+  proprietary license cannot take in, and it has no library form: Royal
+  TSX's plugin is a modified copy of iTerm2's source built as a framework
+  (`royalapplications/royaltsx-v6-oss`). The owner was told; do not start
+  on it unless they come back to it knowing that.
 - Anything that removes a pane must fix `focusedID` first:
   `rebuild()` synchronously calls `onLayoutChange` → toolbar validation →
   `focusedPane`. `closePane` does this; `focusedPane` repairs stale focus.
@@ -248,6 +373,9 @@ as `Toolbox-*.ips` (JSON: header line, then body with `threads[].frames`).
 - RoyalVNCKit is a dylib dependency (by revision); `bundle-app.sh` copies
   it into `Contents/Frameworks` and adds the rpath.
 - The echo test server must skip SFTP channels or it echoes SFTP INIT bytes.
+  Its channel tables belong to one connection each (`new_client`): channel
+  ids start over in every connection, and shared tables let sessions that
+  opened together take each other's channel.
 - Session end: `SshListener.on_closed(clean)` /
   `RdpListener.on_closed(reason, clean)`; a pane auto-closes 0.7 s after a
   clean end only. Failures keep the pane with the message.
@@ -419,15 +547,121 @@ real VNC server and Touch ID on a certificate-signed build.
 RDP: files from the remote desktop to the Mac, pictures on the clipboard,
 audio, a client-side pointer (the host's cursor shapes; today the Mac's
 arrow is all there is), ⌘C/⌘V mapped to Ctrl in a session, per-connection
-certificate verification. Elsewhere: session restore (workspaces +
-layouts), broadcast input, jump hosts, port forwards, a Tasks concept like
-Royal's, terminal theme picker. Offered to the owner and not asked for:
+certificate verification. Local terminals: entries in the tree with a name,
+a folder to start in and a command (needs a security review first, see the
+2026-11-24 addendum), entitlements so programs in a release build's
+terminal can script other apps. Tabs: dragging a pane onto a pane of
+another window, dragging a pane onto a tab. Elsewhere: session restore
+(workspaces + layouts), broadcast input, jump hosts, port forwards, a
+Tasks concept like Royal's, terminal theme picker. The sidebar keeps every
+folder open after a filter was used and loses which ones were open before
+(as it always did). Offered to the owner and not asked for:
 LDAP hardening (plain-LDAP fallback off by default, a key-size hint in the
 error, pinning an internal root CA); letting sidebar titles use the room
 kept for the key badge and the spinner when neither shows (names are cut
 38 points early in a narrow sidebar).
 
 ## Current state (update in every commit)
+
+**0.4.0, 2026-11-24, from the laptop: committed and pushed, not released
+yet.** The owner asked for a commit, a push and a new release build.
+`VERSION` is 0.4.0 and `docs/release-notes/0.4.0.md` is written, but this
+Mac cannot finish a release: its keychain has no `toolbox-notary`
+notarization profile (`make release` stops at its first check) and the
+GitHub CLI is not installed (`make publish`). The owner was told. Either
+they set both up here (README, "Sharing builds with the team", plus `brew
+install gh` and `gh auth login`), or the release is made on the desktop
+Mac: `git pull`, `make core`, `make release`, `make publish`, the checks
+and the clean-up in the release flow at the end of this file, and a commit
+that records it here.
+
+The change set: the owner asked for three things in one message: a terminal
+for local sessions "based on iTerm 2 if that is open source and possible",
+a fix for "I can only paste into the filter from another source once",
+and "new sessions for rdp, ssh, terminals, and ft should all open in tabs
+instead of new panes; the user can then organize as they want or focus on
+one session".
+
+- **The paste bug.** Cause and fix are in the invariants (key
+  equivalents): a live remote desktop took ⌘V from the whole window.
+  Reproduced first with `--demo-filter-paste rdp-local` (first paste
+  lands, second does not, the test server counts a key), isolated with the
+  same run on an SSH connection (both land), fixed in
+  `RdpSessionView.performKeyEquivalent`, run again (both land; the key
+  count moves only when the pane has the keyboard). If the owner sees it
+  again with no remote desktop in the window, it is something else.
+- **Sessions in tabs.** See the invariants for where sessions go, tab
+  titles, emptied tabs and sidebars. The Pane menu and the header's
+  context menu are unchanged, except that Move to New Workspace is off for
+  a session that already has its tab to itself. Rename takes an empty name
+  to mean "automatic again".
+- **Local terminals.** File ▸ New Local Terminal (⌘⇧T), a toolbar button,
+  and a line in the empty pane's hint. Not iTerm2 (see the invariants):
+  the SSH panes' engine in its local-process form. 10,000 lines of
+  scrollback, title from the system, an idle shell closes without a
+  question (`PaneContent.closeWarning`; the quit and close-window
+  questions count `sessionsToWarnAbout`, not live sessions). Edit ▸ Find
+  (⌘F, ⌘G, ⌘⇧G, ⌘E) drives SwiftTerm's find bar in SSH and local
+  terminals. The folder purpose strings in `bundle-app.sh` and
+  `project.yml` mention the terminal.
+- `core/`: nothing that ships. The SSH test server (`ssh_test_server.rs`,
+  `test-support` only) kept one channel table for all its connections,
+  keyed by channel ids that start over in each one. With several sessions
+  opened in one launch, which is now the normal way to check tabs, two
+  SFTP sessions took each other's channel and one of them ended in "SFTP
+  handshake failed: Timeout". Every client has tables of its own now.
+  `make test`: 72 as before, clippy clean.
+
+Verified on the finished build, as a second instance against the fixture
+and the local servers, from logs and `--snapshot` reports: SSH, RDP, two
+file browsers and a local terminal each in a tab named after it, in the
+order opened; the sessions merged into one workspace by `--demo-merge`,
+the emptied tabs closing; a tab closing when its shell exits; a line typed
+into the local terminal run by a login shell; the title following `cd`
+and a foreground program, a program's own title dropped when the shell is
+back and the shell's kept; `--demo-filter-paste rdp-local` with the app in
+front (both pastes land, one key at the server, the new tab's sidebar the
+same on all five points); the menu items behind ⌘⇧T and ⌘F carried out by
+`--demo-key` from the background (a terminal in a new tab; the find bar in
+the snapshot picture); the local terminal in a copy signed ad hoc with the
+hardened runtime, and no stray process after that copy is killed with a
+program running in its terminal. `make test`: 72, clippy clean.
+
+Seen in real screenshots on a build from earlier the same afternoon (the
+last attempts could not get the app in front, and nothing that draws
+changed in between): the tab bar with the sessions' names, the local
+terminal's text and colours, three sessions side by side after a merge,
+and output that arrived while a tab was hidden shown when the tab came
+back, for an SSH and a local terminal.
+
+Not verified: ⌘⇧T and ⌘F as key presses (the app could not be brought to
+the front for that run; their items are set up like every other shortcut
+in the menu), and anything that takes a click: the toolbar button, the
+close question that names a program, Rename with an empty name, the find
+bar's buttons. A notarized build. Real hosts: two sessions to one Windows
+host with one account will behave like the test server, the earlier one
+ends and its tab closes.
+
+**This laptop's clone** was still on the history of the first rewrite of
+2026-11-19 (11 commits with other IDs, differing from GitHub's in one
+scrubbed hostname) and could not be pulled. `main` was moved to
+`origin/main` with nothing merged and nothing lost. Left for the owner,
+because it cannot be undone: the old commits are still in this clone's
+reflog and under its local tag `v0.2.0` (GitHub's `v0.2.0` is a different
+commit). `git fetch origin --tags --force`, `git reflog expire
+--expire=now --all` and `git gc --prune=now` remove them; so does
+deleting the clone and cloning again. Two more things about it. `origin`
+still names the repository's old address. GitHub redirects fetches and
+pushes, so the push went through it; `git remote set-url origin` with the
+address at the top of this file puts it right, and `make publish` will
+want that done first, because `gh` takes the repository from the remote.
+And its `user.email` is
+still the old account's no-reply address, which has a name in it: the
+commit was made with the identity of the newest commit on GitHub given on
+the command line (`git -c user.name=… -c user.email=… commit`), and the
+setting itself was left alone. Until the owner changes it, every commit
+from this clone has to be made that way; compare with `git log -1
+--format='%an <%ae>' origin/main` first.
 
 **License, 2026-11-23, on the owner's word and pushed:** `LICENSE` added
 (proprietary, see Conventions), a License section in `README.md`, and the

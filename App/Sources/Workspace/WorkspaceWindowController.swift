@@ -10,9 +10,16 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
 
     let paneVC = PaneContainerViewController()
     private let splitVC = NSSplitViewController()
+    private(set) var sidebar: SidebarOutlineController!
     private var editorSheet: NSWindow?
+    /// What the workspace is called while nothing is in it ("Workspace 3").
+    private let placeholderName: String
+    /// The name the user gave the workspace. Without one its tab is named
+    /// after the sessions in it.
+    private var customName: String?
 
     init(name: String) {
+        placeholderName = name
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -47,6 +54,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
             )
         )
         sidebar.expandAllOnLoad = CommandLine.arguments.contains("--expand-all")
+        self.sidebar = sidebar
         let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = 220
         sidebarItem.maximumThickness = 520
@@ -68,7 +76,12 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
         toolbar.allowsUserCustomization = false
         window.toolbar = toolbar
 
-        paneVC.onLayoutChange = { [weak self] in self?.window?.toolbar?.validateVisibleItems() }
+        paneVC.onLayoutChange = { [weak self] in
+            self?.window?.toolbar?.validateVisibleItems()
+            self?.refreshTitle()
+        }
+        paneVC.onContentChange = { [weak self] in self?.refreshTitle() }
+        paneVC.onEmptied = { [weak self] in self?.workspaceEmptied() }
         paneVC.onOpenConnection = { [weak self] connection, pane in self?.open(connection, in: pane) }
         paneVC.contextMenuProvider = { [weak self] pane in self?.paneMenu(for: pane) }
     }
@@ -76,15 +89,80 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    // MARK: Where sessions go
+
+    /// Where a new session goes when nobody chose a pane for it: an empty
+    /// pane of this workspace, otherwise a workspace tab of its own.
+    /// Putting sessions side by side is left to the user: Split Right or
+    /// Down and open into the empty pane, drop a connection on a pane's
+    /// edge, or move a pane to another workspace.
+    private func placeForNewSession() -> (workspace: WorkspaceWindowController, pane: PaneView) {
+        if let pane = paneVC.emptyPane { return (self, pane) }
+        guard let delegate = NSApp.delegate as? AppDelegate else {
+            return (self, paneVC.paneForAdoptedSession())
+        }
+        // At the end of the tab bar, so tabs stay in the order the sessions
+        // were opened in whichever tab they were opened from.
+        let workspace = delegate.newWorkspaceWindow(asTab: true, beside: window?.tabGroup?.windows.last ?? window)
+        // The sidebar the session was picked in carries on in the new tab:
+        // same width, same filter, same folders open, same place in the list.
+        workspace.matchSidebar(of: self)
+        return (workspace, workspace.paneVC.focusedPane)
+    }
+
+    private func matchSidebar(of other: WorkspaceWindowController) {
+        guard let mine = splitVC.splitViewItems.first, let theirs = other.splitVC.splitViewItems.first else { return }
+        window?.layoutIfNeeded()
+        mine.isCollapsed = theirs.isCollapsed
+        if !theirs.isCollapsed {
+            splitVC.splitView.setPosition(theirs.viewController.view.frame.width, ofDividerAt: 0)
+        }
+        sidebar.adopt(other.sidebar.viewState)
+    }
+
+    /// The tab's name: the user's, else the sessions in it, else the
+    /// placeholder.
+    private func refreshTitle() {
+        guard let window else { return }
+        let title = customName ?? Self.title(for: paneVC.contents.map(\.tabTitle)) ?? placeholderName
+        if window.title != title { window.title = title }
+    }
+
+    /// "web01", "web01, db02", "web01, db02 + 3".
+    static func title(for sessions: [String]) -> String? {
+        guard !sessions.isEmpty else { return nil }
+        let shown = sessions.prefix(2).joined(separator: ", ")
+        return sessions.count > 2 ? "\(shown) + \(sessions.count - 2)" : shown
+    }
+
+    /// The last pane was closed or moved away. A tab with nothing in it has
+    /// no reason to stay next to others; the only tab of a window does, as
+    /// the place the next session goes.
+    private func workspaceEmptied() {
+        // Not from inside the click or the move that emptied it, and only if
+        // it is still empty by then.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window,
+                  self.paneVC.contents.isEmpty, self.paneVC.paneCount == 1,
+                  self.editorSheet == nil,
+                  (window.tabbedWindows?.count ?? 1) > 1 else { return }
+            window.close()
+        }
+    }
+
     // MARK: Connections
 
-    /// Opens a connection in `pane`, or in the pane a new session should use.
+    /// Opens a connection in `target`, or where new sessions go.
     func open(_ connection: Connection, in target: PaneView? = nil) {
         if connection.kind.isFileTransfer {
             openFiles(connection, in: target)
             return
         }
-        let pane = target ?? paneVC.paneForNewSession()
+        guard let pane = target else {
+            let place = placeForNewSession()
+            place.workspace.open(connection, in: place.pane)
+            return
+        }
         switch connection.kind {
         case .sftp, .ftp, .ftps:
             return
@@ -144,7 +222,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
                          message: "This connection is \(connection.kind.label). Create a File Transfer connection for the host instead.")
             return
         }
-        let pane = target ?? paneVC.paneForNewSession()
+        guard let pane = target else {
+            let place = placeForNewSession()
+            place.workspace.openFiles(connection, in: place.pane)
+            return
+        }
         let files = SftpPaneView(connection: connection)
         pane.setContent(files)
         paneVC.setFocus(pane.id, makeFirstResponder: true)
@@ -169,6 +251,20 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
             }
         }
     }
+
+    /// Opens a terminal running the user's shell on this Mac.
+    func openLocalTerminal(in target: PaneView? = nil) {
+        guard let pane = target else {
+            let place = placeForNewSession()
+            place.workspace.openLocalTerminal(in: place.pane)
+            return
+        }
+        let terminal = LocalTerminalView()
+        pane.setContent(terminal)
+        paneVC.setFocus(pane.id, makeFirstResponder: true)
+    }
+
+    @objc func newLocalTerminal(_ sender: Any?) { openLocalTerminal() }
 
     /// The connection behind the focused pane, if any.
     private var focusedConnection: Connection? {
@@ -394,9 +490,15 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
 
     @objc func movePaneToNewWorkspace(_ sender: Any?) {
         let pane = paneVC.focusedPane
-        guard pane.content != nil, let delegate = NSApp.delegate as? AppDelegate else { return }
-        let target = delegate.newWorkspaceWindow(asTab: true)
+        guard canMoveToNewWorkspace, let delegate = NSApp.delegate as? AppDelegate else { return }
+        let target = delegate.newWorkspaceWindow(asTab: true, beside: window)
         movePane(pane, to: target)
+    }
+
+    /// A session that already has its workspace to itself gains nothing
+    /// from a new one.
+    private var canMoveToNewWorkspace: Bool {
+        paneVC.focusedPane.content != nil && paneVC.paneCount > 1
     }
 
     @objc func movePaneToWorkspace(_ sender: NSMenuItem) {
@@ -408,9 +510,11 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
     private func paneMenu(for pane: PaneView) -> NSMenu? {
         guard pane.content != nil else { return nil }
         let menu = NSMenu()
-        let toNew = NSMenuItem(title: "Move to New Workspace", action: #selector(movePaneToNewWorkspace(_:)), keyEquivalent: "")
-        toNew.target = self
-        menu.addItem(toNew)
+        if canMoveToNewWorkspace {
+            let toNew = NSMenuItem(title: "Move to New Workspace", action: #selector(movePaneToNewWorkspace(_:)), keyEquivalent: "")
+            toNew.target = self
+            menu.addItem(toNew)
+        }
         let others = otherWorkspaces
         if !others.isEmpty {
             let submenu = NSMenu(title: "Move to Workspace")
@@ -425,7 +529,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
             parent.submenu = submenu
             menu.addItem(parent)
         }
-        menu.addItem(.separator())
+        if menu.numberOfItems > 0 { menu.addItem(.separator()) }
         let close = NSMenuItem(title: "Close Pane", action: #selector(closePane(_:)), keyEquivalent: "")
         close.target = self
         menu.addItem(close)
@@ -444,21 +548,26 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
 
     @objc func closePane(_ sender: Any?) {
         let pane = paneVC.focusedPane
-        if pane.content?.isLive == true,
-           !Prompts.confirm(title: "Close pane?", message: "The session will be disconnected.", ok: "Close") {
+        if let warning = pane.content?.closeWarning,
+           !Prompts.confirm(title: "Close pane?", message: warning, ok: "Close") {
             return
         }
         paneVC.closePane(pane.id)
     }
 
-    /// Also reached by double-clicking the workspace's tab.
+    /// Also reached by double-clicking the workspace's tab. An empty name
+    /// goes back to naming the tab after its sessions.
     @objc func renameWorkspace(_ sender: Any?) {
         guard let window else { return }
-        if let name = Prompts.askText(title: "Rename Workspace", message: "Double-click a tab to rename it any time.",
-                                      initial: window.title, ok: "Rename"),
-           !name.trimmingCharacters(in: .whitespaces).isEmpty {
-            window.title = name.trimmingCharacters(in: .whitespaces)
-        }
+        guard let entered = Prompts.askText(
+            title: "Rename Workspace",
+            message: "Double-click a tab to rename it any time. Leave the name empty to have the tab named after its sessions.",
+            initial: window.title, ok: "Rename") else { return }
+        let name = entered.trimmingCharacters(in: .whitespaces)
+        // Confirming the automatic name unchanged does not pin it.
+        if customName == nil, name == window.title { return }
+        customName = name.isEmpty ? nil : name
+        refreshTitle()
     }
 
     private var canClosePane: Bool {
@@ -469,8 +578,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
         switch menuItem.action {
         case #selector(closePane(_:)): return canClosePane
         case #selector(browseFiles(_:)): return focusedConnection.map { $0.kind.usesSsh || $0.kind.isFileTransfer } ?? false
-        case #selector(movePaneToNewWorkspace(_:)), #selector(movePaneToWorkspace(_:)):
-            return paneVC.focusedPane.content != nil
+        case #selector(movePaneToNewWorkspace(_:)): return canMoveToNewWorkspace
+        case #selector(movePaneToWorkspace(_:)): return paneVC.focusedPane.content != nil
         case #selector(focusNextPane(_:)), #selector(focusPreviousPane(_:)): return paneVC.paneCount > 1
         default: return true
         }
@@ -487,7 +596,7 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
     // MARK: NSWindowDelegate
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        let live = paneVC.liveSessionCount
+        let live = paneVC.sessionsToWarnAbout
         guard live > 0 else { return true }
         return Prompts.confirm(title: "Close “\(sender.title)”?",
                                message: "\(live) active session\(live == 1 ? "" : "s") will be disconnected.",
@@ -502,13 +611,14 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
     // MARK: NSToolbarDelegate
 
     private static let newConnectionItem = NSToolbarItem.Identifier("newConnection")
+    private static let localTerminalItem = NSToolbarItem.Identifier("localTerminal")
     private static let splitRightItem = NSToolbarItem.Identifier("splitRight")
     private static let splitDownItem = NSToolbarItem.Identifier("splitDown")
     private static let closePaneItem = NSToolbarItem.Identifier("closePane")
     private static let browseFilesItem = NSToolbarItem.Identifier("browseFiles")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.newConnectionItem, .flexibleSpace,
+        [.toggleSidebar, .sidebarTrackingSeparator, Self.newConnectionItem, Self.localTerminalItem, .flexibleSpace,
          Self.browseFilesItem, Self.splitRightItem, Self.splitDownItem, Self.closePaneItem]
     }
 
@@ -521,6 +631,8 @@ final class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NST
         switch id {
         case Self.newConnectionItem:
             return toolbarItem(id, symbol: "plus", label: "New Connection", action: #selector(newConnection(_:)))
+        case Self.localTerminalItem:
+            return toolbarItem(id, symbol: "terminal", label: "New Local Terminal", action: #selector(newLocalTerminal(_:)))
         case Self.browseFilesItem:
             return toolbarItem(id, symbol: "folder", label: "Browse Files", action: #selector(browseFiles(_:)))
         case Self.splitRightItem:

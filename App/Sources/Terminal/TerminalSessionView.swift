@@ -31,6 +31,10 @@ final class TerminalSessionView: NSView, PaneContent {
     var onStateChange: (() -> Void)?
     var onFocus: (() -> Void)?
     var onSessionEnded: ((Bool) -> Void)?
+    /// The tab keeps to the connection's name; the pane's header adds
+    /// whatever title the remote shell sets, which changes with every
+    /// prompt on many hosts.
+    var tabTitle: String { connection.name }
 
     /// Creates the pane in a "resolving" state; call `start` once the
     /// credentials are known.

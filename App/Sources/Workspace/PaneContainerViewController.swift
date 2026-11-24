@@ -73,6 +73,11 @@ final class PaneContainerViewController: NSViewController {
     var onOpenConnection: ((Connection, PaneView) -> Void)?
     /// Builds the header context menu for a pane.
     var contextMenuProvider: ((PaneView) -> NSMenu?)?
+    /// A session came, went, or changed its title.
+    var onContentChange: (() -> Void)?
+    /// The workspace's last pane was closed or moved away: nothing is left
+    /// in it.
+    var onEmptied: (() -> Void)?
     private var clickMonitor: Any?
 
     init() {
@@ -135,10 +140,28 @@ final class PaneContainerViewController: NSViewController {
         panes.values.filter { $0.content?.isLive == true }.count
     }
 
-    /// The pane a new session should open in: the focused one if it is
-    /// empty, otherwise a fresh pane split to the right of it.
-    func paneForNewSession() -> PaneView {
-        focusedPane.content == nil ? focusedPane : insertPane(relativeTo: focusedID, side: .right)
+    /// Sessions that closing the workspace would interrupt (an idle local
+    /// shell is live, but nothing is lost by closing it).
+    var sessionsToWarnAbout: Int {
+        panes.values.filter { $0.content?.closeWarning != nil }.count
+    }
+
+    /// The sessions, in the order of the layout.
+    var contents: [PaneContent] {
+        tree.leaves.compactMap { panes[$0]?.content }
+    }
+
+    /// A pane with nothing in it, the focused one first.
+    var emptyPane: PaneView? {
+        if focusedPane.content == nil { return focusedPane }
+        return tree.leaves.compactMap { panes[$0] }.first { $0.content == nil }
+    }
+
+    /// The pane a session moved here from another workspace goes in: an
+    /// empty one, otherwise a fresh pane split to the right of the focused
+    /// one.
+    func paneForAdoptedSession() -> PaneView {
+        emptyPane ?? insertPane(relativeTo: focusedID, side: .right)
     }
 
     @discardableResult
@@ -158,13 +181,23 @@ final class PaneContainerViewController: NSViewController {
         return pane
     }
 
-    /// Closes a pane's session. The last remaining pane is emptied, not removed.
+    /// Closes a pane's session. The last remaining pane is emptied, not
+    /// removed, and the workspace is told that nothing is left in it.
     func closePane(_ id: UUID) {
         guard let pane = panes[id] else { return }
+        let hadSession = pane.content != nil
         pane.setContent(nil)
+        if !remove(pane), hadSession { onEmptied?() }
+    }
+
+    /// Takes a pane out of the layout, unless it is the only one. Returns
+    /// whether it was removed.
+    @discardableResult
+    private func remove(_ pane: PaneView) -> Bool {
+        let id = pane.id
         guard tree.leaves.count > 1 else {
             setFocus(id, makeFirstResponder: true)
-            return
+            return false
         }
         let order = tree.leaves
         let index = order.firstIndex(of: id) ?? 0
@@ -180,6 +213,7 @@ final class PaneContainerViewController: NSViewController {
         pane.removeFromSuperview()
         rebuild()
         setFocus(next, makeFirstResponder: focusMoved)
+        return true
     }
 
     func focusNeighbor(_ delta: Int) {
@@ -251,19 +285,20 @@ final class PaneContainerViewController: NSViewController {
             guard let self, let pane else { return nil }
             return self.contextMenuProvider?(pane)
         }
+        pane.onContentChange = { [weak self] in self?.onContentChange?() }
         return pane
     }
 
     /// Takes a pane's session out of this workspace, closing the pane.
     func lift(_ pane: PaneView) -> PaneContent? {
         let content = pane.takeContent()
-        closePane(pane.id)
+        if !remove(pane), content != nil { onEmptied?() }
         return content
     }
 
     /// Places a session arriving from another workspace.
     func adopt(_ content: PaneContent) {
-        let pane = paneForNewSession()
+        let pane = paneForAdoptedSession()
         pane.setContent(content)
         setFocus(pane.id, makeFirstResponder: true)
     }

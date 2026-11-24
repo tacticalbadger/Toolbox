@@ -50,11 +50,11 @@ targets:
         NSSupportsSuddenTermination: false
         NSHumanReadableCopyright: ""
         # Shown when macOS asks whether the app may read a protected folder.
-        NSDesktopFolderUsageDescription: "Toolbox reads files here only when you paste them into a remote desktop or transfer them to a server."
-        NSDocumentsFolderUsageDescription: "Toolbox reads files here only when you paste them into a remote desktop or transfer them to a server."
-        NSDownloadsFolderUsageDescription: "Toolbox reads files here only when you paste them into a remote desktop or transfer them to a server."
-        NSRemovableVolumesUsageDescription: "Toolbox reads files here only when you paste them into a remote desktop or transfer them to a server."
-        NSNetworkVolumesUsageDescription: "Toolbox reads files here only when you paste them into a remote desktop or transfer them to a server."
+        NSDesktopFolderUsageDescription: "Toolbox reads files here when you paste them into a remote desktop, transfer them to a server, or work with them in a local terminal."
+        NSDocumentsFolderUsageDescription: "Toolbox reads files here when you paste them into a remote desktop, transfer them to a server, or work with them in a local terminal."
+        NSDownloadsFolderUsageDescription: "Toolbox reads files here when you paste them into a remote desktop, transfer them to a server, or work with them in a local terminal."
+        NSRemovableVolumesUsageDescription: "Toolbox reads files here when you paste them into a remote desktop, transfer them to a server, or work with them in a local terminal."
+        NSNetworkVolumesUsageDescription: "Toolbox reads files here when you paste them into a remote desktop, transfer them to a server, or work with them in a local terminal."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.dobbs.Toolbox

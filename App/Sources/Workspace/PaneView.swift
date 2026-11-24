@@ -17,8 +17,19 @@ protocol PaneContent: AnyObject {
     /// The session is over. `true` for a clean end (sign-out, logout,
     /// closed by us), `false` after a failure worth leaving on screen.
     var onSessionEnded: ((Bool) -> Void)? { get set }
+    /// A short name for the workspace's tab. The pane's own title can be
+    /// longer and change more often.
+    var tabTitle: String { get }
+    /// What closing the pane would interrupt, as a sentence for the
+    /// question that is asked first; `nil` closes without asking.
+    var closeWarning: String? { get }
     func focus()
     func terminate()
+}
+
+extension PaneContent {
+    var tabTitle: String { title }
+    var closeWarning: String? { isLive ? "The session will be disconnected." : nil }
 }
 
 /// The strip above a session; dragging it moves the pane.
@@ -96,6 +107,8 @@ final class PaneView: NSView, NSDraggingSource {
     var onDropConnection: ((Connection, DropZone) -> Void)?
     /// Context menu for the header (move to workspace, close).
     var contextMenuProvider: (() -> NSMenu?)?
+    /// The session came, went, or changed its title.
+    var onContentChange: (() -> Void)?
 
     var isFocused = false {
         didSet { updateBorder() }
@@ -109,7 +122,7 @@ final class PaneView: NSView, NSDraggingSource {
     private let header = PaneHeaderView()
     private let statusDot = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
-    private let placeholder = NSTextField(wrappingLabelWithString: "No session\n\nDouble-click a connection in the sidebar, drag one here,\nor press ⌘N to create one.")
+    private let placeholder = NSTextField(wrappingLabelWithString: "No session\n\nDouble-click a connection in the sidebar, drag one here,\nor press ⌘N to create one. ⇧⌘T opens a terminal on this Mac.")
     private let dropOverlay = DropOverlayView()
     private var contentConstraints: [NSLayoutConstraint] = []
 
@@ -165,13 +178,17 @@ final class PaneView: NSView, NSDraggingSource {
             header.isHidden = true
             placeholder.isHidden = false
             titleLabel.stringValue = ""
+            onContentChange?()
             return
         }
 
         header.isHidden = false
         placeholder.isHidden = true
         titleLabel.stringValue = newContent.title
-        newContent.onTitleChange = { [weak self] title in self?.titleLabel.stringValue = title }
+        newContent.onTitleChange = { [weak self] title in
+            self?.titleLabel.stringValue = title
+            self?.onContentChange?()
+        }
         newContent.onStateChange = { [weak self] in self?.refreshStatus() }
         newContent.onFocus = { [weak self] in
             guard let self, !self.isFocused else { return }
@@ -200,6 +217,7 @@ final class PaneView: NSView, NSDraggingSource {
         ]
         NSLayoutConstraint.activate(contentConstraints)
         refreshStatus()
+        onContentChange?()
     }
 
     func focus() {
