@@ -383,9 +383,11 @@ as `Toolbox-*.ips` (JSON: header line, then body with `threads[].frames`).
   a notarytool keychain profile `toolbox-notary`; README "Sharing builds
   with the team" has the setup. The Team ID is the code in parentheses in
   `security find-identity -v -p codesigning`; keep it, names and account
-  emails out of the repo. On the desktop Mac both exist since 2026-11-18; the private
-  key lives only in that Mac's login keychain (export a .p12 to release
-  from the laptop). Lessons from the first real run: Xcode refused to
+  emails out of the repo. On the desktop Mac both exist since 2026-11-18. The
+  laptop has a Developer ID certificate of its own since 2026-11-19 (a
+  second one for the same team) and, since 2026-11-24, the profile and
+  `gh` (`brew install gh`, `gh auth login`); 0.4.0 was released from it.
+  Lessons from the first real run: Xcode refused to
   create the certificate for the account holder, so it was made on
   developer.apple.com from a Keychain Access CSR; Apple's intermediates
   (DeveloperIDG2CA, AppleWWDRCAG3 from apple.com/certificateauthority) had
@@ -563,17 +565,52 @@ kept for the key badge and the spinner when neither shows (names are cut
 
 ## Current state (update in every commit)
 
-**0.4.0, 2026-11-24, from the laptop: committed and pushed, not released
-yet.** The owner asked for a commit, a push and a new release build.
-`VERSION` is 0.4.0 and `docs/release-notes/0.4.0.md` is written, but this
-Mac cannot finish a release: its keychain has no `toolbox-notary`
-notarization profile (`make release` stops at its first check) and the
-GitHub CLI is not installed (`make publish`). The owner was told. Either
-they set both up here (README, "Sharing builds with the team", plus `brew
-install gh` and `gh auth login`), or the release is made on the desktop
-Mac: `git pull`, `make core`, `make release`, `make publish`, the checks
-and the clean-up in the release flow at the end of this file, and a commit
-that records it here.
+**Toolbox 0.4.0 (build 19) is published** as GitHub Release `v0.4.0`
+(2026-11-24); the tag is on the commit before this one. It is the first
+release made on the laptop. Until that day the laptop had a Developer ID
+certificate but neither a notarization profile nor the GitHub CLI. The
+owner asked for the release from there: `gh` was installed and signed in
+as the repository's owner (browser flow), and the `toolbox-notary` profile
+was stored with `notarytool store-credentials` from the app-specific
+password they supplied. Either Mac can release now.
+
+Built with `make release`: signed, notarized (app and disk image both
+accepted), stapled. Checked before publishing, on a quarantined copy of
+the disk image: Gatekeeper accepts the image and the app in it ("Notarized
+Developer ID"), the ticket is stapled, hardened runtime, no entitlements,
+no string naming the build Mac, version 0.4.0 (19). The app copied out of
+that image then ran as a second instance against the fixture and the local
+servers: SSH, RDP with the H.264 picture, a file browser and a local
+terminal each in a tab, a typed command run by the shell, the merge into
+one workspace, the new tab's sidebar. After publishing: the files
+downloaded back from the release match `SHA256SUMS` and the local files
+byte for byte, the release is the latest, and its tag points at the commit
+it was built from. Afterwards the app bundle was removed from `build/` on
+the laptop. The release files (`build/release/`) and the fixture are still
+there: removing the whole folder, as the release flow at the end of this
+file says, was refused by the session's permission mode, and the rule the
+owner wrote for the laptop itself is to delete the app bundle and leave
+the rest of `build/` unless asked. The owner was told and can say which
+they want there.
+
+Two things learned on the way. A copy of the app taken out of a
+quarantined disk image is quarantined too, and `open` starts such a copy
+from a translocated path (`…/AppTranslocation/<id>/d/Toolbox.app`). It
+did start, which is the nearest thing to a recipient's first launch that
+was seen; but a script that looks for the path it launched neither reads
+nor stops that instance, and three of them stayed on the owner's screen
+until `pgrep -x Toolbox` showed them. For the run that is read from its
+snapshot, clear the flag on the scratch copy first (`xattr -dr
+com.apple.quarantine`); the Gatekeeper verdict comes from `spctl` on the
+quarantined image and the app in it. And after any run `pgrep -x Toolbox`
+has to come back empty, or with the owner's own copy only. `make publish`
+was run as
+`GH_REPO=tacticalbadger/Toolbox make publish`, because the laptop clone's
+`origin` still names the old address and `gh` takes the repository from
+the remote.
+
+The installed copy in `/Applications` on the laptop is still 0.2.0; the
+owner installs from the Releases page.
 
 The change set: the owner asked for three things in one message: a terminal
 for local sessions "based on iTerm 2 if that is open source and possible",
