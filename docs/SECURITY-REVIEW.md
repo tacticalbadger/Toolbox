@@ -496,10 +496,12 @@ an update is installed, where the update key lives, and the scripts that
 sign and publish an update. The adversaries in mind are someone who
 controls the GitHub repository or account the releases are on, or the
 network between a user and GitHub; and the plain accident of a lost key.
-Method: Sparkle's documentation and headers, a read-through of the change
-set, `tools/e2e/update-rehearsal.sh` (a whole update with a throwaway key
-and a feed served from the same Mac), and a local server that wrote down
-what a check sends.
+Method: Sparkle's documentation and headers, and its source for what
+happens when a signature fails; a read-through of the change set;
+`tools/e2e/update-rehearsal.sh` (a whole update with a throwaway key and a
+feed served from the same Mac); a local server that wrote down what a
+check sends; and, once 0.5.0 was out, a relabelled copy of the release
+build updating itself from the published feed (at the end).
 
 **What goes out.** At first launch, then once a day while the app runs,
 and on Toolbox ▸ Check for Updates…, the app sends one request for the
@@ -514,30 +516,66 @@ Toolbox ▸ Check for Updates Automatically stops the daily request.
 **What has to hold before anything is installed.** Two signatures, both
 made with the update key, an EdDSA (ed25519) key whose public half is in
 the app's Info.plist (`SUPublicEDKey`) and so under the app's own code
-signature:
+signature. For each of the two, Sparkle keeps one exception, so that a
+developer who loses the key is not cut off from the copies in use. The
+exceptions are in its source (`SUAppcastDriver.m`, `AppInstaller.m`,
+`SUUpdateValidator.m`, `SUCodeSigningVerifier.m`). The first version of
+this addendum, written from the documentation, did not know them; see the
+correction at the end.
 
 - *The feed* (`SURequireSignedFeed`). A feed changed after it was signed
   is refused whole ("The update feed is improperly signed"): no version in
   it is offered, its notes and links are not shown, and the archive it
-  names is not downloaded.
+  names is not downloaded. *The exception:* a copy that has seen no good
+  feed for 20 days, counted from the first one it refused (the date is in
+  its preferences as `SUInitialFailedFeedSigningValidationDate`, and one
+  feed that verifies clears it), reads the feed from then on, with
+  restrictions. Release notes and links in it are dropped, a version
+  string is cut off a few characters after its first letter (so that no
+  message rides in one), nothing in it can be marked critical or
+  information-only, only an app archive counts, and nothing is downloaded
+  before the user has agreed in the update window, also in a copy that is
+  set to install updates by itself. The rule for the archive is not
+  relaxed by any of this.
 - *The archive*, checked before it is unpacked
   (`SUVerifyUpdateBeforeExtraction`). An archive with four bytes changed,
   same name and length, is found and downloaded and then refused ("The
-  update is improperly signed"); nothing is installed.
+  update is improperly signed"); nothing is installed. *The exception:* an
+  archive that fails this check is still taken if the file itself carries
+  an Apple code signature from a Developer ID Application certificate of
+  the team that signed the installed app. A zip cannot carry one. A signed
+  disk image does, and every release's disk image is signed that way. The
+  app inside must then hold a public key that the archive's EdDSA
+  signature does verify against, and its own code signature must be valid.
+- A version older than the running one is never installed, whoever signed
+  it (the installer refuses "updates that downgrade").
 
-Both refusals, a good update (the old copy replaced itself, and the result's
-code signature verifies) and an up-to-date copy being offered nothing are
-what the rehearsal checks, and it fails unless each happens for that
-reason.
+So two keys can get an update installed: the update key, and the Developer
+ID's private key by way of the two exceptions together.
+
+The rehearsal checks a good update (the old copy replaced itself, and the
+result's code signature verifies), an up-to-date copy being offered
+nothing, both refusals, each for its reason, and the 20-day exception:
+with the date moved back by hand the altered feed is read, and nothing is
+downloaded or installed although the copy is set to install without
+asking. In a picture of that state the update window names the version,
+shows no notes and asks. Not tried, and taken from the source: what
+follows Install Update there, and the archive exception.
 
 **What someone who controls the GitHub account can do.** Withhold: delete
 the feed or the release, or put an old feed back (a version that is not
 newer than the running one is not installed). That keeps users on what
 they have; nothing tells them. Replace the disk image on the Releases
 page: that reaches people who download by hand, who are protected by
-Gatekeeper and notarization as before, not by this. What they cannot do
-is make an installed copy install anything, or change the notes and links
-it shows: both need the update key.
+Gatekeeper and notarization as before, not by this. Put a feed of their
+own there: for 20 days every check ends in the error above; after that,
+copies offer whatever version it names, without notes, and a user who
+agrees downloads what it points at. That request tells the server it
+points at the user's IP address, and the download is then refused unless
+the owner signed it, which makes it a real release and never an older
+one. What they cannot do without one of the two private keys is make an
+installed copy install anything else, or show notes and links of their
+choosing.
 
 **The update key.**
 
@@ -557,10 +595,25 @@ it shows: both need the update key.
 - *Stolen:* it is of use only together with a way to put files where
   copies look, which is the GitHub account. With both, code can be sent to
   every installed copy. It deserves the care the Developer ID key gets.
-- *Lost:* no installed copy can be updated again. Because archives are
-  verified before unpacking, the app's Apple signature cannot stand in for
-  a new key. Everyone downloads by hand once more. The owner was told to
-  keep a copy.
+  That key is the other one that can do it: with the GitHub account and
+  the Developer ID's private key, a feed of the attacker's own is read
+  after 20 days, and a disk image signed with the Developer ID passes.
+  The difference is the wait, and that the user is asked first and shown
+  no notes. Both private keys are in the same login keychain.
+- *Lost:* updates stop, and there is a way back, slow and not tried here.
+  A new key pair; then a release whose update archive is the signed disk
+  image and not the zip (`release.sh` would have to hand
+  `generate_appcast` the image), with the new public key in the app, and
+  the feed and the image signed with the new key. Copies in use refuse
+  that feed for 20 days, then offer the version without notes, and take
+  the image on its Developer ID signature. Whoever does not want to wait
+  downloads by hand. A copy of the key avoids all of it; the owner was
+  asked to keep one.
+- The 20 days are `SUSignedFeedFailureExpirationInterval` in the
+  Info.plist, in seconds; 0 means a badly signed feed is never read. It
+  is not set, so Sparkle's default holds: with 0 a lost key would be
+  final, and what the default lets through still needs one of the two
+  keys.
 - `TOOLBOX_UPDATE_KEY_FILE` lets a release take the key from a file; such
   a file is exactly as safe as wherever it is kept.
 
@@ -584,7 +637,9 @@ environment does not look for updates, so a test copy is never offered the
 real release, and only such an instance honours `--updater-feed`. The
 rehearsal's copies have a bundle identifier of their own (their own
 preferences), trust a key made for that run and, unlike the real app, may
-load plain HTTP from 127.0.0.1.
+load plain HTTP from 127.0.0.1. The rehearsal removes those preferences
+before and after a run: the date the 20 days are counted from is kept in
+them, and an earlier run must not decide a later one.
 
 **The feed's address is in every copy.** If the repository or the account
 is renamed, old copies keep updating only through GitHub's redirect, for
@@ -592,6 +647,32 @@ as long as the old name stays unused. Someone who took the old name could
 not send updates (no key) but could stop them. Ship a build with the new
 address before a rename.
 
-Not verified: a real update between two published releases (it needs the
-release after 0.5.0), and an update of a copy in a folder the user cannot
-write to.
+Not verified: an update between two published releases (it needs the
+release after 0.5.0; how near the day of the release came is below), an
+update of a copy in a folder the user cannot write to, what follows
+Install Update for a feed read under the 20-day exception, and the way
+back from a lost key.
+
+**After the release, the same day.** 0.5.0 was published, and two things
+were added to this addendum.
+
+*Seen:* the files on the release are the ones that were built and
+notarized, byte for byte, and the feed served at
+`releases/latest/download/appcast.xml` is the signed one. A copy of the
+release build, relabelled 0.4.9 with a bundle identifier of its own and
+signed again, was then pointed at that feed with the real public key in
+it. It found 0.5.0, downloaded the published zip, verified it, and after
+it quit the copy on disk was the published app, file for file, its
+signature valid and its notarization ticket in place. Only the old copy's
+version was made up.
+
+*Corrected:* as first written, and as the owner was first told, this
+addendum said that only the update key can get an update installed, and
+that a lost key ends updates for good, "because archives are verified
+before unpacking, the app's Apple signature cannot stand in for a new
+key". Sparkle 2.10 has it the other way round: verifying before unpacking
+is what brings in the Developer ID check of the archive file, and the
+20-day rule for feeds exists for the same case. A preference a test copy
+left behind gave it away (`SUInitialFailedFeedSigningValidationDate`).
+The text above is the corrected one. Nothing in the app changed for it:
+the release always behaved this way, and the description did not match.

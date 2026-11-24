@@ -269,11 +269,16 @@ makes a key for the run, two copies of `build/Toolbox.app` that claim to be
 run's key and may read plain HTTP from 127.0.0.1), a feed written by
 `generate_appcast` as in a release, and a web server on 127.0.0.1:8497 for
 as long as it runs. It passes only if the old copy becomes the new one on
-disk after it quits, the updated copy is then offered nothing, and an
+disk after it quits, the updated copy is then offered nothing, an
 archive and a feed altered after signing are each refused for that reason
-("improperly signed"; for the feed, with no download). Everything stays in
-the background and nothing real is touched: not the update key, not
-GitHub, not the owner's preferences. The app's part: `--updater-feed <url>`
+("improperly signed"; for the feed, with no download), and the same feed,
+21 days on by a date moved back in the copies' preferences, is read the
+way Sparkle's 20-day rule has it and still gets nothing downloaded.
+Everything stays in the background and nothing real is touched: not the
+update key, not GitHub, not the owner's preferences. A run that passes
+removes its folder (`KEEP=1` keeps it; a failed run's stays for a look),
+and every run removes what its copies kept in `~/Library` under their own
+identifier. The app's part: `--updater-feed <url>`
 (honoured only in a run against a store named in the environment; such a
 run looks for updates nowhere otherwise), `--demo-update` (look two
 seconds after launch, the way the daily check does) and
@@ -386,13 +391,23 @@ as `Toolbox-*.ips` (JSON: header line, then body with `threads[].frames`).
   - The app takes an update only if the feed and the archive are both
     signed with the update key (`SURequireSignedFeed`,
     `SUVerifyUpdateBeforeExtraction`, `SUPublicEDKey` in the Info.plist
-    that `bundle-app.sh` writes). The private half is in the login
-    keychain of the release Mac, account `toolbox-update-key`; it is never
-    in the repository or in a file a script writes. There is one key for
-    good: a second one would be refused by every copy in use, and a lost
-    one ends updates for all of them. `make release` compares the keychain's
-    public half with the one in `update-config.sh` and stops on a
-    difference.
+    that `bundle-app.sh` writes), with two exceptions that are Sparkle's
+    own, there for a developer who lost the key. A copy that has seen no
+    good feed for 20 days reads a badly signed one after all, with
+    restrictions (no notes, no links, nothing downloaded before the user
+    agrees). And an archive that fails the key is taken if the file
+    itself is signed with the app's Developer ID team, which a disk image
+    can be and a zip cannot. So the Developer ID's private key is a second
+    key to updates, and a lost update key stops them for 20 days, not for
+    good. The whole rule and the way back from a lost key (not tried) are
+    in the 0.5.0 addendum of `docs/SECURITY-REVIEW.md`. Do not restate it
+    from memory: the first write-up had it wrong.
+  - The private half of the update key is in the login keychain of the
+    release Mac, account `toolbox-update-key`; it is never in the
+    repository or in a file a script writes. There is one key, and a
+    second is made for nothing short of a lost one. `make release`
+    compares the keychain's public half with the one in `update-config.sh`
+    and stops on a difference.
   - The feed is `appcast.xml`, a file on every GitHub Release; copies read
     `releases/latest/download/appcast.xml`. A release published without it
     stops updates for everyone until the next one, silently, so `make
@@ -418,7 +433,15 @@ as `Toolbox-*.ips` (JSON: header line, then body with `threads[].frames`).
     the keychain and macOS asks about it once per Mac and per Sparkle
     version (Always Allow), which blocks an unattended `make release`
     until someone answers. `SwiftUI` has a `KeyPress` type too: do not
-    name anything in the app that.
+    name anything in the app that. What Sparkle does with a signature
+    that fails is in its source and not all on its documentation page
+    (`App/.build/checkouts/Sparkle`: `Sparkle/SUAppcastDriver.m`,
+    `Autoupdate/AppInstaller.m`, `Sparkle/SUUpdateValidator.m`). A copy
+    keeps the date of the first feed it refused in its preferences
+    (`SUInitialFailedFeedSigningValidationDate`), which is why the
+    rehearsal clears its copies' preferences before it starts; and
+    `defaults delete` empties a domain but leaves an empty file in
+    `~/Library/Preferences`.
 - iTerm2 as the terminal engine was asked for (2026-11-24, "if that is
   open source and possible") and is not possible here. It is GPL (its
   README says version 3, its LICENSE file is version 2), which the
@@ -629,13 +652,14 @@ kept for the key badge and the spinner when neither shows (names are cut
 
 ## Current state (update in every commit)
 
-**0.5.0: updates over the air (2026-11-24, on the laptop).** `VERSION` is
-0.5.0 and its release notes are written; the owner asked for the release
-in the same session, and the commit after this one records how it went.
-The owner asked what it would take for "the few users that have it, if any, to
-download this version then get updates over the air", was given the
-answer (Sparkle; one more download by hand, because 0.4.0 has no updater
-in it; one key to keep safe) and said to proceed. Download counts on
+**Toolbox 0.5.0 (build 21) is published** as GitHub Release `v0.5.0`
+(2026-11-24, from the laptop); the tag is on `f6a3e81`. It is the first
+release with the updater in it, and so the last one anybody downloads by
+hand: 0.4.0 and earlier cannot be told that it exists. The owner asked
+what it would take for "the few users that have it, if any, to download
+this version then get updates over the air", was given the answer
+(Sparkle; one more download by hand; one key to keep safe), said to
+proceed, and chose to release in the same session. Download counts on
 GitHub that day: four per release for the disk images of 0.2.0 to 0.3.1,
 the release checks and the owner's own installs included.
 
@@ -650,41 +674,102 @@ the release checks and the owner's own installs included.
   `build/release/appcast.xml` with `generate_appcast`, then checks the
   archive's signature against the key in the built app with a few lines
   of CryptoKit; `make publish` uploads the feed and refuses to publish
-  without one. `publish.sh` now names the repository itself (`GH_REPO`), so
-  the laptop clone's old remote address no longer matters to it.
+  without one. `publish.sh` names the repository itself (`GH_REPO`), so
+  the laptop clone's old remote address does not matter to it.
 - The update key was made on the laptop that day with `generate_keys
   --account toolbox-update-key` and is in that Mac's login keychain only.
   **The desktop Mac cannot make a release until the key is brought over**
   (README, "Sharing builds with the team", step 3), and the owner was
-  asked to keep a copy in their password manager.
+  asked to keep a copy in their password manager. macOS asked about the
+  key on the laptop at the first `make release` that used it, and the
+  owner answered.
 
-Verified: `tools/e2e/update-rehearsal.sh` passes all four checks against a
-debug build and against the release build (Developer ID, hardened
-runtime): the old copy replaces itself and the result's signature
-verifies, the updated copy is offered nothing, and an archive and a feed
-altered after signing are refused as improperly signed, the feed without a
-download. The update window was looked at in a `--snapshot` picture with
-the 0.4.0 notes in it (Markdown, bold and bullets as written). A check
-sends the feed's path, `Toolbox/<version> Sparkle/2.10.1` and the language
-setting, recorded on a local server. `NOTARIZE=0 make release` with the
-real key: nothing naming the Mac, hardened runtime and timestamps on all
-five executables, no entitlement anywhere in the bundle, feed written and
-its signature good against the app's key. A run against the fixture does
-not start the updater. `make test`: 72.
+Before the release, on a debug build and on the release build (Developer
+ID, hardened runtime): the rehearsal's checks; the update window in a
+`--snapshot` picture with the 0.4.0 notes in it (Markdown, bold and
+bullets as written); what a check sends, recorded on a local server (the
+feed's path, `Toolbox/<version> Sparkle/2.10.1` and the language
+setting); and that a run against the fixture does not start the updater.
 
-Not verified: a real update between two published releases, which can only
-be seen when the release after the first one with the updater goes out;
-the update of a copy in a folder the user cannot write to; Check for
-Updates… as a click.
+The release itself. `make release`: signed, notarized (app and disk image
+both accepted), stapled, the zip signed with the update key, the feed
+written and its signature checked against the key in the app. Before
+publishing, on a quarantined copy of the disk image: Gatekeeper accepts
+the image and the app in it ("Notarized Developer ID"), the ticket is
+stapled, hardened runtime, five executables and no entitlement on any, no
+string naming the build Mac, Sparkle's license text in the bundle,
+version 0.5.0 (21). The feed names
+`releases/download/v0.5.0/Toolbox-0.5.0.zip`, build 21 and the zip's
+length. The app copied out of the image ran against the fixture and the
+local servers (SSH, RDP, a file browser and a local terminal, each in a
+tab). The rehearsal passed against the notarized build.
 
-**Toolbox 0.4.0 (build 19) is published** as GitHub Release `v0.4.0`
-(2026-11-24); the tag is on the commit before this one. It is the first
+After publishing: the four files downloaded back from the release match
+`SHA256SUMS` and the local files byte for byte; the release is the latest
+and not a draft; the feed served at
+`releases/latest/download/appcast.xml` (two redirects) is the file that
+was built. Then the nearest thing to a real update that can be had before
+a second release exists: a copy of the release build, relabelled 0.4.9 (1)
+with a bundle identifier of its own and signed again, was started against
+the real feed with the real public key in it. It found 0.5.0 (21),
+downloaded the published zip, verified it, and once it had quit the copy
+on disk was the published app: the same 56 files as in the zip, signature
+valid, ticket stapled, "Notarized Developer ID". Only the old copy's
+version was made up.
+
+**Corrected after the release: what Sparkle does when a signature
+fails.** `f6a3e81`, and what the owner had been told, said that only the
+update key gets an update installed and that a lost key ends updates for
+good. Both were wrong, in opposite directions. The invariants and the
+0.5.0 addendum of `docs/SECURITY-REVIEW.md` have it right now: 20 days,
+then a restricted reading of the feed; a disk image signed with the
+Developer ID in place of the key. A preference that a test copy left
+behind led to it, Sparkle's source settled it, and one run showed it: 21
+days on, the altered feed is offered in a window without notes, and
+nothing is downloaded until the user says so. That run is the rehearsal's
+fifth check now, and the rehearsal clears up after itself (it used to
+leave 150 MB of test copies in `build/` and its copies' preferences and
+caches in `~/Library`); it passed against the notarized build in that
+form. In the app only a comment in `Updates.swift` changed: the
+published build does what it did, and the description was what was off.
+The owner was told. Left at Sparkle's default on purpose:
+`SUSignedFeedFailureExpirationInterval`, where 0 would mean a badly
+signed feed is never read and a lost key is final.
+
+Not verified: an update between two published releases (the first real
+one will be 0.5.0 to whatever comes next); an update of a copy in a
+folder the user cannot write to; Check for Updates… as a click; what
+follows Install Update for a feed read under the 20-day rule; the way
+back from a lost key. `make test`: 72.
+
+Afterwards, on the laptop: the app bundle was removed from `build/`, and
+so were the scratch copies and what the test copies had left in
+`~/Library`. `build/release/` (the 0.5.0 files) and the fixture
+(`build/e2e`) are still there, as after 0.4.0: the rule the owner wrote
+for the laptop is to delete the app bundle and leave the rest of `build/`
+unless asked, and removing the whole folder, as the release flow at the
+end of this file says, was refused by the session's permission mode then.
+The owner can say which they want there. The copy in `/Applications` on
+the laptop is still 0.2.0 and has no updater: 0.5.0 is installed from the
+Releases page once, there as everywhere.
+
+Found on the way and not done: the app ships Sparkle's license text and
+no other third party's. SwiftTerm, RoyalVNCKit and the crates the core is
+built from (its lock file lists 461, the test-only ones included) are MIT
+or Apache-2.0 for the most part, with a few MPL-2.0 and Unicode-3.0, and
+those licenses ask for their notice to travel with copies. Every release
+so far is like that. A build step that collects the notices into
+`Contents/Resources/Licenses` would settle it; the owner was told.
+
+**Toolbox 0.4.0 (build 19)** was published earlier the same day as GitHub
+Release `v0.4.0`; the tag is on `ae98388`. It was the first
 release made on the laptop. Until that day the laptop had a Developer ID
 certificate but neither a notarization profile nor the GitHub CLI. The
 owner asked for the release from there: `gh` was installed and signed in
 as the repository's owner (browser flow), and the `toolbox-notary` profile
 was stored with `notarytool store-credentials` from the app-specific
-password they supplied. Either Mac can release now.
+password they supplied. Either Mac could release from then on; since
+0.5.0 the desktop needs the update key first (above).
 
 Built with `make release`: signed, notarized (app and disk image both
 accepted), stapled. Checked before publishing, on a quarantined copy of
@@ -698,12 +783,7 @@ one workspace, the new tab's sidebar. After publishing: the files
 downloaded back from the release match `SHA256SUMS` and the local files
 byte for byte, the release is the latest, and its tag points at the commit
 it was built from. Afterwards the app bundle was removed from `build/` on
-the laptop. The release files (`build/release/`) and the fixture are still
-there: removing the whole folder, as the release flow at the end of this
-file says, was refused by the session's permission mode, and the rule the
-owner wrote for the laptop itself is to delete the app bundle and leave
-the rest of `build/` unless asked. The owner was told and can say which
-they want there.
+the laptop; what stayed there, and why, is in the 0.5.0 record above.
 
 Two things learned on the way. A copy of the app taken out of a
 quarantined disk image is quarantined too, and `open` starts such a copy
@@ -719,12 +799,9 @@ has to come back empty, or with the owner's own copy only. `make publish`
 was run as
 `GH_REPO=tacticalbadger/Toolbox make publish`, because the laptop clone's
 `origin` still names the old address and `gh` takes the repository from
-the remote.
+the remote (`publish.sh` sets that itself since 0.5.0).
 
-The installed copy in `/Applications` on the laptop is still 0.2.0; the
-owner installs from the Releases page.
-
-The change set: the owner asked for three things in one message: a terminal
+The 0.4.0 change set: the owner asked for three things in one message: a terminal
 for local sessions "based on iTerm 2 if that is open source and possible",
 a fix for "I can only paste into the filter from another source once",
 and "new sessions for rdp, ssh, terminals, and ft should all open in tabs
@@ -802,8 +879,8 @@ commit). `git fetch origin --tags --force`, `git reflog expire
 deleting the clone and cloning again. Two more things about it. `origin`
 still names the repository's old address. GitHub redirects fetches and
 pushes, so the push went through it; `git remote set-url origin` with the
-address at the top of this file puts it right, and `make publish` will
-want that done first, because `gh` takes the repository from the remote.
+address at the top of this file puts it right (`make publish` does not
+depend on it any more: `publish.sh` names the repository itself).
 And its `user.email` is
 still the old account's no-reply address, which has a name in it: the
 commit was made with the identity of the newest commit on GitHub given on
@@ -820,7 +897,7 @@ still reads the manifest. It was made from a fresh clone, not from a
 working copy: pull before other work.
 
 As of 2026-11-23, on `main`. **Toolbox 0.3.1 (build 15) is published** as
-GitHub Release `v0.3.1`; the tag is on the commit before this one. Built
+GitHub Release `v0.3.1`; the tag is on `39fb7ea`. Built
 with `make release` on the desktop Mac, notarized (app and disk image),
 and checked from a quarantined copy of the DMG: accepted by Gatekeeper,
 hardened runtime, no entitlements, no paths from the build Mac. The files

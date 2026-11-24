@@ -13,14 +13,18 @@ UPDATE_FEED_URL="https://github.com/$UPDATE_REPO/releases/latest/download/appcas
 
 # The public half of the update key (EdDSA). The app accepts an update, and
 # the feed that announces it, only if they are signed with the private
-# half. That half lives in the login keychain of the Mac that makes
+# half. (Sparkle keeps two exceptions for a lost key, which make the
+# Developer ID a second way in: docs/SECURITY-REVIEW.md, the 0.5.0
+# addendum.) That half lives in the login keychain of the Mac that makes
 # releases, under the account name below, and never in the repository.
 # Sparkle's own tools manage it:
 #   $SPARKLE_BIN/generate_keys --account toolbox-update-key          show the public key (creates a key if none)
 #   $SPARKLE_BIN/generate_keys --account toolbox-update-key -x FILE  write the private key to FILE (to move or back up)
 #   $SPARKLE_BIN/generate_keys --account toolbox-update-key -f FILE  take the private key from FILE (on the other Mac)
-# Lose the private key and no install can be updated over the air again:
-# everyone has to download a build by hand once more.
+# Lose the private key and updates stop: for 20 days at least, and after
+# that they come back only through Sparkle's provision for a lost key,
+# which has not been tried here. Until then everyone downloads a build by
+# hand. Keep a copy of the key.
 UPDATE_KEY_ACCOUNT="toolbox-update-key"
 UPDATE_PUBLIC_KEY="h2Ue9u/hwW6kZp5iTEZ6aZBh5jzWhsn/CZe+laVMknw="
 

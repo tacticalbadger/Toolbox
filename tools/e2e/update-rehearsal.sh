@@ -9,16 +9,24 @@
 #
 #   tools/e2e/update-rehearsal.sh [work-dir]      default: build/update-rehearsal
 #
-# It checks four things and exits non-zero unless all hold:
+# It checks five things and exits non-zero unless all hold:
 #   1. The old copy finds the new one in the feed, verifies it, and once it
 #      has quit, the copy on disk is the new version.
 #   2. That copy, now the new version, finds nothing newer in the same feed.
 #   3. With the archive altered after it was signed, nothing is installed
 #      and the app says why.
 #   4. The same with the feed altered after it was signed.
+#   5. Sparkle stops refusing such a feed once a copy has seen no good one
+#      for 20 days, and reads it with restrictions from then on
+#      (docs/SECURITY-REVIEW.md, the 0.5.0 addendum). With that date moved
+#      back by hand: still nothing is downloaded or installed on the
+#      feed's word.
 #
 # Needs build/Toolbox.app (make app) and python3 for the web server
-# (PORT=8497 by default). The copies run in the background.
+# (PORT=8497 by default). The copies run in the background. A run that
+# passes removes its work folder (KEEP=1 keeps it; a run that fails always
+# does), and every run removes what the copies kept under their own bundle
+# identifier in ~/Library: preferences and caches.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -59,14 +67,42 @@ running() { pgrep -f "$1/Contents/MacOS/Toolbox" >/dev/null; }
 stop() { pkill -f "$1/Contents/MacOS/Toolbox" 2>/dev/null || true; wait_for 20 not_running "$1" || true; }
 not_running() { ! running "$1"; }
 
+# What the copies keep outside the work folder, under their own bundle
+# identifier: preferences (Sparkle's among them) and caches. Removed before
+# a run, so that nothing an earlier one left decides this one (the date of
+# check 5 is kept there), and after it. Only ever for an identifier below
+# the app's own, never for the app's.
+forget_copies() {
+  [[ "$BUNDLE_ID" == com.dobbs.Toolbox.?* ]] || return 0
+  # `defaults delete` empties the domain where the system keeps it in
+  # memory, and leaves an empty file behind.
+  defaults delete "$BUNDLE_ID" >/dev/null 2>&1 || true
+  rm -f "$HOME/Library/Preferences/$BUNDLE_ID.plist"
+  rm -rf "$HOME/Library/Caches/$BUNDLE_ID" "$HOME/Library/HTTPStorages/$BUNDLE_ID" \
+    "$HOME/Library/HTTPStorages/$BUNDLE_ID.binarycookies" \
+    "$HOME/Library/Saved Application State/$BUNDLE_ID.savedState"
+}
+
 rm -rf "$WORK"
 mkdir -p "$WORK"
 chmod 700 "$WORK"
+forget_copies
 
 # The feeds are read over HTTP from this folder, on this Mac only.
 python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$WORK" > "$WORK/server.log" 2>&1 &
 SERVER=$!
-trap 'kill "$SERVER" 2>/dev/null || true' EXIT
+finish() {
+  local code=$?
+  kill "$SERVER" 2>/dev/null || true
+  wait "$SERVER" 2>/dev/null || true
+  forget_copies
+  if [[ "$code" == 0 && "${KEEP:-0}" != 1 ]]; then
+    rm -rf "$WORK"
+  else
+    echo "left for a look: $WORK"
+  fi
+}
+trap finish EXIT
 wait_for 10 nc -z 127.0.0.1 "$PORT" || fail "the local web server did not start on port $PORT (in use? set PORT)"
 
 # --- a key for this run only ---------------------------------------------------
@@ -239,6 +275,39 @@ if grep -q "GET /bad-feed/Toolbox-" "$WORK/server.log"; then
   RESULT=1
 fi
 
+# --- 5. the same feed once Sparkle's 20 days are over -------------------------------
+# Sparkle refuses a badly signed feed for 20 days, counted from a copy's
+# first refusal (the date is in the copy's preferences and one good feed
+# clears it). After that it reads the feed with restrictions: no notes, no
+# links, and no download before the user has agreed. That is its way back
+# for a developer who lost the key; docs/SECURITY-REVIEW.md has the whole
+# rule. Check 4 has just set the date; here it is moved back by hand. These
+# copies are set to install without asking, so a download would start by
+# itself if anything allowed one.
+step "5. $OLD_VERSION looks at the altered feed again, 21 days after first refusing it"
+LATER="$WORK/old-bad-feed-later.log"
+defaults write "$BUNDLE_ID" SUInitialFailedFeedSigningValidationDate -date "$(date -u -v-21d '+%Y-%m-%d %H:%M:%S +0000')"
+launch "$WORK/old-bad-feed" "$WORK/bad-feed" "$LATER"
+wait_for 60 said "updates: (found|stopped)" "$LATER" || true
+sleep 10   # several times what the download took in check 1
+grep 'updates: ' "$LATER" | sed -E 's/^.*updates: /  app: /' || true
+stop "$WORK/old-bad-feed/Toolbox.app"
+sleep 15   # as long as an installer would have needed
+NOW="$(version_of "$WORK/old-bad-feed/Toolbox.app" 2>/dev/null || echo missing)"
+if ! said "updates: (found|stopped)" "$LATER"; then
+  echo "FAIL: the copy said nothing about the feed, so nothing was learned"
+  RESULT=1
+elif [[ "$NOW" != "$OLD_VERSION" ]] || said "updates: (downloaded|.*when the app quits)" "$LATER" \
+     || grep -q "GET /bad-feed/Toolbox-" "$WORK/server.log"; then
+  echo "FAIL: 21 days on, the altered feed got further than an offer: the copy is $NOW, expected $OLD_VERSION and no download"
+  RESULT=1
+elif said "updates: found $NEW_VERSION" "$LATER"; then
+  echo "PASS: the feed is read now, as Sparkle's 20-day rule has it, and nothing was downloaded or installed (still $NOW)"
+else
+  echo "PASS: nothing was downloaded or installed (still $NOW). The feed was refused again, though: this Sparkle"
+  echo "      does not have the 20-day rule that docs/SECURITY-REVIEW.md describes for 2.10; bring that up to date"
+fi
+
 echo
-[[ "$RESULT" == 0 ]] && echo "update rehearsal: all four checks passed" || echo "update rehearsal: FAILED"
+[[ "$RESULT" == 0 ]] && echo "update rehearsal: all five checks passed" || echo "update rehearsal: FAILED"
 exit "$RESULT"

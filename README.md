@@ -188,9 +188,14 @@ there is no server to run.
 Two things follow from how it is secured. The feed and the zip are both
 checked against the public key built into the app, so someone who gets
 into the GitHub account can withhold an update but cannot supply one. And
-if the private key is ever lost, no installed copy can be updated over the
-air again: everyone downloads a build by hand once more. Keep a copy of it
-somewhere safe.
+the private key should not get lost. Copies in use refuse a feed signed
+with any other key for 20 days, and after that take a new key only from a
+disk image signed with the same Developer ID, asking the user first and
+showing no notes. That is Sparkle's provision for a lost key; it has not
+been tried here, and until it has run its course everyone downloads a
+build by hand. Keep a copy of the key somewhere safe.
+`docs/SECURITY-REVIEW.md` (the 0.5.0 addendum) has the whole rule, and
+what it means that the Developer ID can stand in for the key.
 
 Versions before 0.5.0 have no updater and are replaced by hand one last
 time. A release that is published without its feed (an older checkout, a
@@ -200,7 +205,9 @@ good one, which is why `make publish` refuses to go on without the file.
 `tools/e2e/update-rehearsal.sh` rehearses a whole update with nothing real
 in it (a throwaway key, two made-up versions of the current build, a feed
 served from this Mac) and checks that the old copy becomes the new one,
-and that an archive or a feed altered after signing is refused.
+that an archive or a feed altered after signing is refused, and that such
+a feed still gets nothing downloaded once Sparkle's 20 days are over. A
+run that passes leaves nothing behind.
 
 Once the Developer ID is in the keychain, plain `make app` signs with it
 as well (without the timestamp and hardened runtime that only releases

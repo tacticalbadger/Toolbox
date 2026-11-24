@@ -15,6 +15,12 @@ import Sparkle
 /// the Info.plist (`SUPublicEDKey`, `SURequireSignedFeed`,
 /// `SUVerifyUpdateBeforeExtraction`), so whoever controls the place the
 /// files are served from can withhold an update but not supply one.
+///
+/// Sparkle keeps two exceptions to that for a developer who lost the key:
+/// a copy that has seen no good feed for 20 days reads a badly signed one
+/// with restrictions, and an archive that is itself signed with the app's
+/// Developer ID passes without the key. The 0.5.0 addendum of
+/// `docs/SECURITY-REVIEW.md` has both, and what follows from them.
 @MainActor
 final class Updates: NSObject, SPUUpdaterDelegate {
     static let shared = Updates()
